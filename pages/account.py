@@ -1,15 +1,15 @@
 from dependency import *
+import constants
 from modules.nav import MenuButtons
 
-CONFIG_FILENAME = 'config.yaml'
 
 # Load the configuration file
-with open(CONFIG_FILENAME) as file:
+with open(constants.CONFIG_FILENAME) as file:
     config = yaml.load(file, Loader=SafeLoader)
 
 def get_roles():
     """Gets user roles based on config file."""
-    with open(CONFIG_FILENAME) as file:
+    with open(constants.CONFIG_FILENAME) as file:
         config = yaml.load(file, Loader=SafeLoader)
 
     if config is not None:
@@ -72,7 +72,7 @@ with register_tab:
             st.error(e)
 
 # Save the updated configuration file
-with open(CONFIG_FILENAME, 'w') as file:
+with open(constants.CONFIG_FILENAME, 'w') as file:
     yaml.dump(config, file, default_flow_style=False)
 
 MenuButtons(ss.class_name, get_roles())
