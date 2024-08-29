@@ -148,8 +148,9 @@ class llama_model:
 
             prompt_retrieval = PromptTemplate(
                     template="""You are an assistant for question-answering tasks. 
+                    Treat as a Question , regardless of punctuation.
                     Use the following pieces of retrieved context to answer the question. If the Question does not belongs to the Context ,  just say "FALLBACK". 
-                    Use three sentences maximum and keep the answer concise:
+
                     Question: {question} 
                     Context: {context} 
                     Answer: 
@@ -168,7 +169,7 @@ class llama_model:
                                 an answer is grounded in / supported by a set of facts. Give a binary score 'yes' or 'no' score to indicate 
                                 whether the answer is grounded in / supported by a set of facts. Provide the binary score as a JSON with a 
                                 single key 'score' and no preamble or explanation.
-                                
+                     
                                 Here are the facts:
                                 {documents} 
 
@@ -267,8 +268,7 @@ class llama_model:
                     score = retrieval_grader.invoke({"question": question, "document": d.page_content})
                     grade = score['score']
                     # Document relevant
-                    if grade.lower() == "yes":
-                        filtered_docs.append(d)
+                    filtered_docs.append(d)
                 return {"documents": filtered_docs, "question": question}
 
             ### Conditional edge
@@ -321,17 +321,24 @@ class llama_model:
                 generation = state["generation"]
 
                 score = hallucination_grader.invoke({"documents": documents, "generation": generation})
-                grade = score['score']
-
-                # Check hallucination
-                if grade == "yes":
-                    # Check question-answering
+                try:
+                    grade = score['score']
+                    # Check hallucination
+                    if grade == "yes":
+                        # Check question-answering
+                        score = answer_grader.invoke({"question": question,"generation": generation})
+                        grade = score['score']
+                        if grade == "yes":
+                            return "useful"
+                    else:
+                        return "not supported"
+                except:
                     score = answer_grader.invoke({"question": question,"generation": generation})
                     grade = score['score']
                     if grade == "yes":
                         return "useful"
-                else:
-                    return "not supported"
+                    else:
+                        return "not supported"
 
             workflow = StateGraph(GraphState)
 
