@@ -111,7 +111,7 @@ def rag_model():
     if not user_query or not student_id:
         return jsonify({'message': 'Missing query or student ID', 'status': 400})
     try:
-        answer = rag_function._get_answer_to_query_all(user_query)
+        answer = rag_function._get_answer_to_query(user_query)
         return jsonify(answer)
 
     except Exception as e: 
