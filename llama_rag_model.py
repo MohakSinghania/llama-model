@@ -436,6 +436,4 @@ class llama_model:
         file_path = os.path.join(pdf_directory, file_name)
         if os.path.exists(file_path):
             os.remove(file_path)
-        else:
-            continue
  
