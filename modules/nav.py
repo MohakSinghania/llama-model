@@ -20,6 +20,8 @@ def RAGModelClassNav(class_name):
     ss.class_name = class_name
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/rag_model_stream_class.py", label="RAG Model Based On Class", icon='📚')
 
+def Page1():
+    st.sidebar.page_link("/home/ubuntu/llama-model/pages/page1.py", label="Upload PDF's Based On Hierarchical Architecture", icon='✈️')
 
 def MenuButtons(class_name, user_roles=None):
     if user_roles is None:
@@ -42,6 +44,7 @@ def MenuButtons(class_name, user_roles=None):
         if ss.username in admins:
             UploadPDFNav()
             UploadPDFClassNav()
+            Page1()
 
         # (2) users with user and admin roles have access to page 2.
         RAGModelNav()

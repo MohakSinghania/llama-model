@@ -111,11 +111,48 @@ def rag_model():
     if not user_query or not student_id:
         return jsonify({'message': 'Missing query or student ID', 'status': 400})
     try:
-        answer = rag_function._get_answer_to_query_all(user_query)
+        answer = rag_function._get_answer_to_query(user_query)
         return jsonify(answer)
 
     except Exception as e: 
         return jsonify({'message': f'Error generating answer: {str(e)}', 'status': 404})
+
+@app.route('/display-files', methods=['GET', 'POST'])
+def display_files():
+    class_name = request.args.get('class_name')
+    if not class_name:
+        return jsonify({'message': 'Please Provide Class Name', 'status': 400})
+    try:
+        file_names = rag_function._display_files(class_name)
+        return jsonify(file_names)
+    except Exception as e: 
+        return jsonify({'message': f'Error fetching files {str(e)}', 'status': 404})
+
+@app.route('/delete-files', methods=['GET', 'POST'])
+def delete_files():
+    file_names = request.files.getlist('file_names')
+    class_name = request.form['class_name']
+    invalid_files = []
+    if not class_name:
+        return jsonify({'message': 'Please Provide Class Name', 'status': 400})
+    
+    for file in file_names:
+        if file.filename.endswith(".pdf"):
+            rag_function._delete_files(file)
+        else:
+            invalid_files.append(file.filename)
+    
+    message = rag_function._create_embedding(class_name)
+
+    if invalid_files != []:
+        invalid_message = f'{invalid_files} files are invalid'
+        return jsonify({'message': f'PDF Uploaded Successfully and {invalid_message}', 'status': 201})
+    
+    else:
+        if message['status'] == 201:
+            return ({'message': f'PDF deleted Successfully ', 'status': 201})
+        else:
+            return ({'message': f'PDF not deleted Successfully', 'status': 401})
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0')

@@ -29,7 +29,7 @@ def handle_query():
         st.error("Please enter a query.")
         return
 
-    answer = rag_func._get_answer_to_query_all(user_query)
+    answer = rag_func._get_answer_to_query(user_query)
     if student_id not in st.session_state.chat_history:
         st.session_state.chat_history[student_id] = []
     st.session_state.chat_history[student_id].append({'query': user_query, 'answer': answer['answer']})

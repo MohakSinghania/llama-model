@@ -24,8 +24,6 @@ def initialize_session_state():
 
 initialize_session_state()
 
-# tabs = st.tabs(['UNI-PDF', 'MULTI-PDF'])
-
 def handle_query():
     student_id = st.session_state.student_id
     user_query = st.session_state['user_query']
