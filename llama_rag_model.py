@@ -14,14 +14,10 @@ class GraphState(TypedDict):
     Represents the state of our graph.
 
     Attributes:
-        question: question
-        generation: LLM generation
-        web_search: whether to add search
-        documents: list of documents 
+        keys: A dictionary where each key is a string.
     """
-    question : str
-    generation : str
-    documents : List[str]
+
+    keys: Dict[str, any]
 
 
 class llama_model:
@@ -140,6 +136,7 @@ class llama_model:
 
             ### Nodes
             def retrieve(state):
+    
                 """
                 Retrieve documents
 
@@ -255,6 +252,7 @@ class llama_model:
                 }
 
             def transform_query(state):
+    
                 """
                 Transform the query to produce a better question.
 
