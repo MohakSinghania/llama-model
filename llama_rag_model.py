@@ -21,7 +21,6 @@ class GraphState(TypedDict):
     """
     question : str
     generation : str
-    web_search : str
     documents : List[str]
 
 
@@ -422,3 +421,21 @@ class llama_model:
                 return {'message': 'Query processed successfully', 'status': 200, 'question':query, 'answer': answer}
         except:
             return {'message': 'Answer is not available in the PDF', 'status': 404, 'question':query, 'answer': answer}
+
+    def _display_files(self, class_name):
+        pdf_directory = os.path.join(self.pdf_directory, class_name)
+        files = os.listdir(pdf_directory)
+        pdf_files = [file for file in files if file.endswith('.pdf')]
+        if pdf_files != []:
+            return {'message': f'The List of files for {class_name}', 'status': 200, 'pdf_files': pdf_files}
+        else:
+            return {'message': f'There is no files for {class_name}', 'status': 404, 'pdf_files': pdf_files}
+
+    def _delete_files(self, file_name, class_name):
+        pdf_directory = os.path.join(self.pdf_directory, class_name)
+        file_path = os.path.join(pdf_directory, file_name)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        else:
+            continue
+ 

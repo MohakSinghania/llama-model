@@ -27,7 +27,9 @@ class llama_model:
         self.persist_directory = constants.PERSIST_DIRECTORY
         self.huggingface_model = constants.HUGGINGFACE_MODEL
         self.pdf_directory_all = constants.PDF_DIRECTORY_ALL
+        self.pdf_directory_choice = constants.PDF_DIRECTORY_CHOICE
         self.persist_directory_all = constants.PERSIST_DIRECTORY_ALL
+        self.persist_directory_choice = constants.PERSIST_DIRECTORY_CHOICE
 
 
     def _pdf_file_save(self, pdf_file) -> dict:
@@ -41,11 +43,24 @@ class llama_model:
         if not os.path.exists(pdf_file_path):
             with open(pdf_file_path, "wb") as f:
                 f.write(pdf_file.getbuffer())
-
+    
     def _pdf_file_save_class(self, pdf_file, class_name):
         """Saves the PDF file locally if it does not already exist."""
         pdf_path = os.path.join(self.pdf_directory, class_name)
         
+        # Ensure the directory exists
+        os.makedirs(pdf_path, exist_ok=True)
+        
+        file_name = f"{class_name}_{pdf_file.name}"
+        pdf_file_path = os.path.join(pdf_path, file_name)
+        if not os.path.exists(pdf_file_path):
+            with open(pdf_file_path, "wb") as f:
+                f.write(pdf_file.getbuffer())
+
+    def _pdf_file_save_s_c_ce_class(self, pdf_file, s_c_ce_type, board_type, class_name):
+        """Saves the PDF file locally if it does not already exist."""
+        pdf_path = os.path.join(self.pdf_directory_choice, s_c_ce_type, board_type, class_name)
+        import pdb;pdb.set_trace()
         # Ensure the directory exists
         os.makedirs(pdf_path, exist_ok=True)
         
@@ -102,6 +117,35 @@ class llama_model:
             vectorstore = Chroma.from_documents(
                         documents=doc_splits,
                         collection_name=f"{class_name}",
+                        embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
+                        persist_directory=f"{persist_directory}"
+                        )
+            return {'message': 'PDF Uploaded Successfully', 'status': 201}
+        except:
+            return {'message': 'PDF not Uploaded Successfully', 'status': 400}
+
+    def _create_embedding_s_c_ce(self, s_c_ce_type, board_type, class_name) -> dict:
+        pdf_directory = os.path.join(self.pdf_directory_choice, s_c_ce_type, board_type, class_name)
+        
+        # Load PDF documents
+        pdf_files = [os.path.join(pdf_directory, file) for file in os.listdir(pdf_directory) if file.endswith('.pdf')]
+        docs = [PyMuPDFLoader(file).load() for file in pdf_files]
+        docs_list = [item for sublist in docs for item in sublist]
+        
+        # Split documents into chunks
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
+        doc_splits = text_splitter.split_documents(docs_list)
+        try:
+            # Create a vector store
+            persist_directory = os.path.join(self.persist_directory_choice, s_c_ce_type, board_type, class_name)
+            import pdb;pdb.set_trace()
+            file_type = s_c_ce_type+"_"+board_type+"_"+class_name
+            if os.path.exists(persist_directory):
+                shutil.rmtree(persist_directory)
+            os.makedirs(persist_directory, exist_ok=True)
+            vectorstore = Chroma.from_documents(
+                        documents=doc_splits,
+                        collection_name=f"{file_type}",
                         embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
                         persist_directory=f"{persist_directory}"
                         )
