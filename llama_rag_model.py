@@ -1,12 +1,28 @@
+import re
+import os
+import shutil
 import constants
-from dependency import *
+from pprint import pprint
+from database import PDFDataDatabase
+from langchain_chroma import Chroma
+from langgraph.graph import END, StateGraph
+from typing import Annotated, Dict, TypedDict
+from langchain_core.prompts import PromptTemplate
+from langchain.globals import set_verbose, set_debug
+from langchain_community.chat_models import ChatOllama
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.output_parsers import JsonOutputParser
+from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_huggingface.embeddings import HuggingFaceEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 set_debug(True)
 set_verbose(True)
 
-### LLM
+# LLM
 
 local_llm = constants.LOCAL_LLM
+db = PDFDataDatabase()
 
 
 class GraphState(TypedDict):
@@ -29,37 +45,54 @@ class llama_model:
         self.pdf_directory_all = constants.PDF_DIRECTORY_ALL
         self.persist_directory_all = constants.PERSIST_DIRECTORY_ALL
 
-    def _pdf_file_save_class(self, pdf_file, class_name):
+    def _pdf_file_save_class(self, teacher_id, pdf_file, class_name):
         """Saves the PDF file locally if it does not already exist."""
         pdf_path = os.path.join(self.pdf_directory, class_name)
-        
+
         # Ensure the directory exists
         os.makedirs(pdf_path, exist_ok=True)
-        
+
         file_name = f"{class_name}_{pdf_file.filename}"
         pdf_file_path = os.path.join(pdf_path, file_name)
         if not os.path.exists(pdf_file_path):
             pdf_file.save(pdf_file_path)
 
-    def _pdf_file_save(self, pdf_file):
+        db.connect()
+        db.insert_or_update_data(
+            upload_by=teacher_id,  # Example teacher ID
+            pdf_file_name=file_name,
+            pdf_path=pdf_file_path,
+            class_name=class_name,
+        )
+        db.close_connection()
+
+    def _pdf_file_save(self, teacher_id, pdf_file):
         """Saves the PDF file locally if it does not already exist."""
         pdf_path = self.pdf_directory_all
-        
+
         # Ensure the directory exists
         os.makedirs(pdf_path, exist_ok=True)
-        
+
         pdf_file_path = os.path.join(pdf_path, pdf_file.filename)
         if not os.path.exists(pdf_file_path):
             pdf_file.save(pdf_file_path)
 
-    def _create_embedding(self, class_name) -> dict:
+        db.connect()
+        db.insert_or_update_data(
+            upload_by=teacher_id,  # Example teacher ID
+            pdf_file_name=pdf_file.filename,
+            pdf_path=pdf_file_path,
+        )
+        db.close_connection()
+
+    def _create_embedding(self, class_name) -> dict:    
         pdf_directory = os.path.join(self.pdf_directory, class_name)
-        
+
         # Load PDF documents
         pdf_files = [os.path.join(pdf_directory, file) for file in os.listdir(pdf_directory) if file.endswith('.pdf')]
         docs = [PyMuPDFLoader(file).load() for file in pdf_files]
         docs_list = [item for sublist in docs for item in sublist]
-        
+
         # Split documents into chunks
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
         doc_splits = text_splitter.split_documents(docs_list)
@@ -69,24 +102,24 @@ class llama_model:
             if os.path.exists(persist_directory):
                 shutil.rmtree(persist_directory)
             os.makedirs(persist_directory, exist_ok=True)
-            vectorstore = Chroma.from_documents(
-                        documents=doc_splits,
-                        collection_name=f"{class_name}",
-                        embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
-                        persist_directory=f"{persist_directory}"
-                        )
+            Chroma.from_documents(
+                                documents=doc_splits,
+                                collection_name=f"{class_name}",
+                                embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
+                                persist_directory=f"{persist_directory}"
+                                )
             return {'message': 'PDF Uploaded Successfully', 'status': 201}
-        except:
+        except Exception:
             return {'message': 'PDF not Uploaded Successfully', 'status': 400}
 
     def _create_embedding_all(self) -> dict:
         pdf_directory = self.pdf_directory_all
-        
+
         # Load PDF documents
         pdf_files = [os.path.join(pdf_directory, file) for file in os.listdir(pdf_directory) if file.endswith('.pdf')]
         docs = [PyMuPDFLoader(file).load() for file in pdf_files]
         docs_list = [item for sublist in docs for item in sublist]
-        
+
         # Split documents into chunks
         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
         doc_splits = text_splitter.split_documents(docs_list)
@@ -96,14 +129,14 @@ class llama_model:
             if os.path.exists(persist_directory):
                 shutil.rmtree(persist_directory)
             os.makedirs(persist_directory, exist_ok=True)
-            vectorstore = Chroma.from_documents(
-                        documents=doc_splits,
-                        collection_name=f"all_pdf_files",
-                        embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
-                        persist_directory=f"{persist_directory}"
-                        )
+            Chroma.from_documents(
+                                documents=doc_splits,
+                                collection_name="all_pdf_files",
+                                embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
+                                persist_directory=f"{persist_directory}"
+                                )
             return {'message': 'PDF Uploaded Successfully', 'status': 201}
-        except:
+        except Exception:
             return {'message': 'PDF not Uploaded Successfully', 'status': 400}
 
     def _vectorstore_retriever(self, persist_directory, class_name=None):
@@ -115,18 +148,17 @@ class llama_model:
                     )
         else:
             vectorstore = Chroma(
-                        collection_name=f"all_pdf_files",
+                        collection_name="all_pdf_files",
                         embedding_function=HuggingFaceEmbeddings(model_name=self.huggingface_model),
                         persist_directory=f"{persist_directory}"
                     )
         return vectorstore.as_retriever()
 
-
     def _get_answer_to_query(self, query, class_name=None):
         try:
             llm_format = ChatOllama(model=local_llm, format="json", temperature=0)
             llm_without_format = ChatOllama(model=local_llm, temperature=0)
-            
+
             if class_name is not None:
                 persist_directory = os.path.join(self.persist_directory, class_name)
                 retriever = self._vectorstore_retriever(persist_directory, class_name)
@@ -134,9 +166,8 @@ class llama_model:
                 persist_directory = os.path.join(self.persist_directory_all, "all_pdf_files")
                 retriever = self._vectorstore_retriever(persist_directory)
 
-            ### Nodes
+            # Nodes
             def retrieve(state):
-    
                 """
                 Retrieve documents
 
@@ -169,13 +200,14 @@ class llama_model:
 
                 # Prompt
                 prompt = PromptTemplate(
-                        template="""You are an assistant for question-answering tasks. 
+                        template="""You are an assistant for question-answering tasks.
                         Treat as a Question , regardless of punctuation.
-                        Use the following pieces of retrieved context to answer the question. If the Question does not belongs to the Context ,  just say "FALLBACK". 
+                        Use the following pieces of retrieved context to answer the question.
+                        If the Question does not belongs to the Context, just say "FALLBACK".
 
-                        Question: {question} 
-                        Context: {context} 
-                        Answer: 
+                        Question: {question}
+                        Context: {context}
+                        Answer:
                         """,
                         input_variables=["question", "document"],
                     )
@@ -210,17 +242,17 @@ class llama_model:
                 documents = state_dict["documents"]
 
                 prompt = PromptTemplate(
-                    template="""You are a grader assessing the relevance of a retrieved 
-                    document to a user question. \n 
+                    template="""You are a grader assessing the relevance of a retrieved
+                    document to a user question. \n
                     Here is the retrieved document: \n\n {context} \n\n
                     Here is the user question: {question} \n
-                    If the document contains keywords related to the user question, 
+                    If the document contains keywords related to the user question,
                     grade it as relevant. \n
-                    It does not need to be a stringent test. The goal is to filter out 
+                    It does not need to be a stringent test. The goal is to filter out
                     erroneous retrievals. \n
-                    Give a binary score of 'yes' or 'no' score to indicate whether the document 
+                    Give a binary score of 'yes' or 'no' score to indicate whether the document
                     is relevant to the question. \n
-                    Provide the binary score as a JSON with a single key 'score' and no preamble 
+                    Provide the binary score as a JSON with a single key 'score' and no preamble
                     or explanation.
                     """,
                     input_variables=["question", "context"],
@@ -252,7 +284,6 @@ class llama_model:
                 }
 
             def transform_query(state):
-    
                 """
                 Transform the query to produce a better question.
 
@@ -273,19 +304,19 @@ class llama_model:
                     template="""Treat as a Question , regardless of punctuation. \n
                     Here is the initial question:
                     \n ------- \n
-                    {question} 
+                    {question}
                     \n ------- \n
-                    Provide an improved question without any premable, only respond with the 
+                    Provide an improved question without any premable, only respond with the
                     updated question: """,
                     input_variables=["question"],
                 )
                 # Prompt
                 chain = prompt | llm_without_format | StrOutputParser()
-                
+
                 better_question = chain.invoke({"question": question})
 
                 return {
-                    "keys": {"question": better_question,}
+                    "keys": {"question": better_question}
                 }
 
             def decide_to_generate(state):
@@ -300,14 +331,9 @@ class llama_model:
                 """
 
                 print("---DECIDE TO GENERATE---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                filtered_documents = state_dict["documents"]
-
                 return "generate"
 
-
-            ### Conditional edge
+            # Conditional edge
 
             def grade_generation_v_documents_and_question(state):
                 """
@@ -325,15 +351,15 @@ class llama_model:
                 generation = state_dict["generation"]
 
                 prompt_hallucination = PromptTemplate(
-                    template="""You are a grader assessing whether 
-                    an answer is grounded in / supported by a set of facts. Give a binary score 'yes' or 'no' score to indicate 
-                    whether the answer is grounded in / supported by a set of facts. Provide the binary score as a JSON with a 
+                    template="""You are a grader assessing whether
+                    an answer is grounded in / supported by a set of facts. Give a binary score 'yes' or 'no' score to indicate
+                    whether the answer is grounded in / supported by a set of facts. Provide the binary score as a JSON with a
                     single key 'score' and no preamble or explanation.
-                    
-                    Here are the facts:
-                    {documents} 
 
-                    Here is the answer: 
+                    Here are the facts:
+                    {documents}
+
+                    Here is the answer:
                     {generation}
                     """,
                     input_variables=["generation", "documents"],
@@ -347,26 +373,26 @@ class llama_model:
                 try:
                     if grade == "yes":
                         prompt_resolve = PromptTemplate(
-                        template="""You are a grader assessing whether an 
-                        answer is useful to resolve a question. Give a binary score 'yes' or 'no' to indicate whether the answer is 
-                        useful to resolve a question. Provide the binary score as a JSON with a single key 'score' and no preamble or explanation.
-                        
-                        Here is the answer:
-                        {generation} 
+                            template="""You are a grader assessing whether an answer is useful to resolve a question.
+                            Give a binary score 'yes' or 'no' to indicate whether the answer is useful to resolve a question.
+                            Provide the binary score as a JSON with a single key 'score' and no preamble or explanation.
 
-                        Here is the question: {question}
-                        """,
-                        input_variables=["generation", "question"],
-                        )
+                            Here is the answer:
+                            {generation}
+
+                            Here is the question: {question}
+                            """,
+                            input_variables=["generation", "question"],
+                            )
 
                         answer_grader = prompt_resolve | llm_format | JsonOutputParser()
-                        score = answer_grader.invoke({"question": question,"generation": generation})
+                        score = answer_grader.invoke({"question": question, "generation": generation})
                         grade = score['score']
                         if grade == "yes":
                             return "useful"
                     else:
                         return "not supported"
-                except:
+                except Exception:
                     return "not supported"
 
             workflow = StateGraph(GraphState)
@@ -376,7 +402,6 @@ class llama_model:
             workflow.add_node("grade_documents", grade_documents)  # grade documents
             workflow.add_node("generate", generate)  # generatae
             workflow.add_node("transform_query", transform_query)  # transform_query
-
 
             workflow.set_entry_point("transform_query")
             workflow.add_edge("transform_query", "retrieve")
@@ -409,29 +434,33 @@ class llama_model:
                 for key, value in output.items():
                     # Node
                     pprint(f"Node '{key}':")
-                
+
                 pprint("\n---\n")
             answer = value["keys"]["generation"]
-            fallback_status = bool(re.search(r"FALLBACK",answer, re.I))
+            fallback_status = bool(re.search(r"FALLBACK", answer, re.I))
             if fallback_status:
-                return {'message': 'Query processed successfully', 'status': 404, 'question':query, 'answer': "Sorry the provided query does not belong to context"}
+                return {'message': 'Query processed successfully', 'status': 404, 'question': query,
+                        'answer': "Sorry the provided query does not belong to context"}
             else:
-                return {'message': 'Query processed successfully', 'status': 200, 'question':query, 'answer': answer}
-        except:
-            return {'message': 'Answer is not available in the PDF', 'status': 404, 'question':query, 'answer': answer}
+                return {'message': 'Query processed successfully', 'status': 200, 'question': query, 'answer': answer}
+        except Exception:
+            return {'message': 'Answer is not available in the PDF', 'status': 404, 'question': query, 'answer': answer}
 
     def _display_files(self, class_name):
-        pdf_directory = os.path.join(self.pdf_directory, class_name)
-        files = os.listdir(pdf_directory)
-        pdf_files = [file for file in files if file.endswith('.pdf')]
-        if pdf_files != []:
-            return {'message': f'The List of files for {class_name}', 'status': 200, 'pdf_files': pdf_files}
+        db.connect()
+        filenames = db.get_files_by_class(class_name)
+        db.close_connection()
+        if filenames != []:
+            return {'message': f'The List of files for {class_name}', 'status': 200, 'filenames': filenames}
         else:
-            return {'message': f'There is no files for {class_name}', 'status': 404, 'pdf_files': pdf_files}
+            return {'message': f'There is no files for {class_name}', 'status': 404, 'filenames': filenames}
 
-    def _delete_files(self, file_name, class_name):
-        pdf_directory = os.path.join(self.pdf_directory, class_name)
-        file_path = os.path.join(pdf_directory, file_name)
+    def _delete_files(self, file_name, file_path, class_name):
         if os.path.exists(file_path):
             os.remove(file_path)
- 
+            db.connect()
+            db.delete_record(file_name, file_path, class_name)
+            db.close_connection()
+            return {'status': 200}
+        else:
+            return {'status': 401}
