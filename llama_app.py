@@ -1,8 +1,6 @@
-import os
 import torch
 import ollama
 import secrets
-import constants
 from flask_cors import CORS
 from llama_rag_model import llama_model
 from flask import Flask, request, jsonify, session, send_file
@@ -103,7 +101,7 @@ def upload_pdf():
             pdf_details = rag_function._pdf_file_save(teacher_id, file)
             message = rag_function._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'])
         else:
-            invalid_files.append(file.filename)            
+            invalid_files.append(file.filename)
 
     if invalid_files != []:
         invalid_message = f'{invalid_files} files are invalid'
@@ -142,7 +140,6 @@ def display_files():
 @app.route('/delete-files', methods=['DELETE'])
 def delete_files():
     # Get JSON payload from the request
-    import pdb;pdb.set_trace()
     data = request.json
     file_id = data.get('file_id')
     file_name = data.get('file_name')

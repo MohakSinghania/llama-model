@@ -1,25 +1,21 @@
 import re
-import os
 import uuid
 import boto3
-import shutil
 import tempfile
 import constants
 from io import BytesIO
 from pprint import pprint
-from database import PDFDataDatabase, VectorStorePostgresVector
-from langchain_chroma import Chroma
+from typing import Dict, TypedDict, Any
 from langgraph.graph import END, StateGraph
-from typing import Annotated, Dict, TypedDict, Any
 from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_verbose, set_debug
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
+from langchain_text_splitters import CharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_community.document_loaders import S3FileLoader
-from langchain_community.document_loaders import PyMuPDFLoader, PyPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader
+from database import PDFDataDatabase, VectorStorePostgresVector
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
 
 set_debug(True)
 set_verbose(True)
@@ -99,7 +95,7 @@ class llama_model:
 
         db.connect()
         db.insert_or_update_data(
-            pdf_id= pdf_uuid,
+            pdf_id=pdf_uuid,
             upload_by=teacher_id,  # Example teacher ID
             pdf_file_name=pdf_file.filename,
             pdf_path=pdf_file_path,
@@ -122,7 +118,7 @@ class llama_model:
 
         db.connect()
         db.insert_or_update_data(
-            pdf_id= pdf_uuid,
+            pdf_id=pdf_uuid,
             upload_by=teacher_id,  # Example teacher ID
             pdf_file_name=file_name,
             pdf_path=pdf_file_path,
@@ -133,7 +129,7 @@ class llama_model:
 
     def _create_embedding_all(self, pdf_id, pdf_path, class_name=None) -> dict:
         bucket_name = constants.BUCKETNAME
-        
+
         response = self.s3_client.list_objects_v2(Bucket=bucket_name, Prefix=pdf_path)
         if 'Contents' in response:
             if response['Contents'][0]['Key'].endswith('.pdf'):
@@ -146,24 +142,23 @@ class llama_model:
             if class_name is None:
                 vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
                 document_present_or_not = vector_store.check_if_record_exist(pdf_id)
-                if document_present_or_not['is_rec_exist'] == False:
+                if not document_present_or_not['is_rec_exist']:
                     pdf_id = str(pdf_id)
-                    status = vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                    vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
                     return {'message': 'PDF Uploaded Successfully', 'status': 201}
                 else:
                     return {'message': 'PDF is already Uploaded', 'status': 203}
             else:
                 vector_store = VectorStorePostgresVector(class_name, self.embedding)
                 document_present_or_not = vector_store.check_if_record_exist(pdf_id)
-                if document_present_or_not['is_rec_exist'] == False:
+                if not document_present_or_not['is_rec_exist']:
                     pdf_id = str(pdf_id)
-                    status = vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                    vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
                     return {'message': 'PDF Uploaded Successfully', 'status': 201}
                 else:
-                    return {'message': 'PDF is already Uploaded', 'status': 203}                
+                    return {'message': 'PDF is already Uploaded', 'status': 203}
         except Exception:
-            return {'message': 'Failed to Upload the PDF', 'status': 401}   
-
+            return {'message': 'Failed to Upload the PDF', 'status': 401}
 
     def _vectorstore_retriever(self, class_name=None):
         if class_name is not None:
@@ -171,7 +166,7 @@ class llama_model:
             return vector_store.get_or_create_collection().as_retriever()
         else:
             vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
-            return vector_store.get_or_create_collection().as_retriever()      
+            return vector_store.get_or_create_collection().as_retriever()
 
     def _get_answer_to_query(self, query, class_name=None):
         try:
@@ -221,7 +216,7 @@ class llama_model:
                         Treat as a Question , regardless of punctuation. \n
                         Use the following pieces of retrieved context to answer the question. \n
                         If the Question does not belongs to the Context, just say "FALLBACK",
-                        don't give information based on your own Knowledge base, 
+                        don't give information based on your own Knowledge base,
                         just say or provide answer as "FALLBACK". \n
                         if the Context is a empty list then also say or provide answer as "FALLBACK". \n
 
@@ -389,10 +384,10 @@ class llama_model:
 
                 hallucination_grader = prompt_hallucination | llm_format | JsonOutputParser()
                 score = hallucination_grader.invoke({"documents": documents, "generation": generation})
-                grade = score['score']
 
                 # Check hallucination
                 try:
+                    grade = score['score']
                     if grade == "yes":
                         prompt_resolve = PromptTemplate(
                             template="""You are a grader assessing whether an answer is useful to resolve a question.
@@ -486,28 +481,32 @@ class llama_model:
             else:
                 return {'message': f'There is no files for {class_name}', 'status': 404, 'filenames': filenames}
 
-
-    def _delete_files(self, file_id, file_name, file_path, class_name):
-        import pdb;pdb.set_trace()
+    def _delete_files(self, file_id, file_name, class_name):
         if class_name != 'None':
             vector_store = VectorStorePostgresVector(class_name, self.embedding)
             embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
-            file_status = db.delete_record(file_id, file_name, class_name)
-            if file_status['pdf_path'] is not None:
-               status = self._delete_s3_file(file_status['pdf_path'])
-            if status == True:
-                return {'status': 200}
+            if not embeddings_status['is_rec_exist']:
+                file_status = db.delete_record(file_id, file_name, class_name)
+                if file_status['pdf_path'] is not None:
+                    status = self._delete_s3_file(file_status['pdf_path'])
+                if status:
+                    return {'status': 200}
+                else:
+                    return {'status': 401}
             else:
                 return {'status': 401}
+
         else:
             vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
             embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
-            file_status = db.delete_record(file_id, file_name)
-            import pdb;pdb.set_trace()
-            status = False
-            if file_status['pdf_path'] is not None:
-               status = self._delete_s3_file(file_status['pdf_path'])
-            if status == True:
-                return {'status': 200}
+            if not embeddings_status['is_rec_exist']:
+                file_status = db.delete_record(file_id, file_name)
+                status = False
+                if file_status['pdf_path'] is not None:
+                    status = self._delete_s3_file(file_status['pdf_path'])
+                if status:
+                    return {'status': 200}
+                else:
+                    return {'status': 401}
             else:
                 return {'status': 401}

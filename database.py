@@ -5,9 +5,11 @@ from datetime import datetime
 from langchain_community.vectorstores import PGVector
 from psycopg2.extensions import register_adapter, AsIs
 
+
 # Register adapter for UUID
 def adapt_uuid(uuid_val):
     return AsIs(f"'{str(uuid_val)}'")
+
 
 register_adapter(uuid.UUID, adapt_uuid)
 
@@ -63,7 +65,7 @@ class PDFDataDatabase:
         if self.connection is None:
             print("No database connection. Call connect() first.")
             return
-        
+
         if upload_date_time is None:
             upload_date_time = datetime.now()
 
@@ -85,7 +87,6 @@ class PDFDataDatabase:
             print(f"Error inserting or updating data: {e}")
             self.connection.rollback()
 
-
     def get_files_by_class(self, class_name=None):
         if self.connection is None:
             print("No database connection. Call connect() first.")
@@ -100,7 +101,7 @@ class PDFDataDatabase:
                         FROM pdf_data
                         WHERE class = %s;
                     ''', (class_name,))
-                    
+
                     results = cursor.fetchall()
                     # Convert the result to a list of dictionaries
                     files = [
@@ -122,7 +123,7 @@ class PDFDataDatabase:
                         FROM pdf_data
                         WHERE class IS NULL;
                     ''')
-                    
+
                     results = cursor.fetchall()
                     # Convert the result to a list of dictionaries
                     files = [
@@ -154,9 +155,9 @@ class PDFDataDatabase:
                     FROM pdf_data
                     WHERE pdf_file_name = %s AND upload_by = %s AND class = %s;
                 ''', (pdf_file_name, upload_by, class_name))
-                
+
                 result = cursor.fetchone()
-                
+
                 if result:
                     return result[0]  # Return the pdf_path
                 else:
@@ -179,16 +180,16 @@ class PDFDataDatabase:
                         SELECT pdf_path FROM pdf_data
                         WHERE pdf_id = %s
                     ''', (pdf_id,))
-                    pdf_path = cursor.fetchone()
+                    record = cursor.fetchone()
                     pdf_path = record[0]
                     cursor.execute('''
                         DELETE FROM pdf_data
                         WHERE pdf_id = %s AND pdf_file_name = %s AND class = %s;
                     ''', (pdf_id, pdf_file_name, class_name))
-                    
+
                     self.connection.commit()
                     return {"pdf_path": pdf_path}
-                    
+
             except Exception as e:
                 print(f"Error deleting record: {e}")
                 self.connection.rollback()
@@ -201,37 +202,38 @@ class PDFDataDatabase:
                         SELECT pdf_path FROM pdf_data
                         WHERE pdf_id = %s
                     ''', (pdf_id,))
-                    pdf_path = cursor.fetchone()
+                    record = cursor.fetchone()
                     pdf_path = record[0]
                     cursor.execute('''
                         DELETE FROM pdf_data
                         WHERE pdf_id = %s AND pdf_file_name = %s AND class IS NULL;
                     ''', (pdf_id, pdf_file_name))
-                    
+
                     self.connection.commit()
                     return {"pdf_path": pdf_path}
-                    
+
             except Exception as e:
                 print(f"Error deleting record: {e}")
                 self.connection.rollback()
                 return {"pdf_path": None}
-    
+
     def close_connection(self):
         if self.connection:
             self.connection.close()
             print("Database connection closed.")
 
+
 class VectorStorePostgresVector:
-    def __init__ (self, collection_name, embeddings):
+    def __init__(self, collection_name, embeddings):
         self.collection_name = collection_name
         self.connection = constants.CONNECTION_SETTINGS
         self.embeddings = embeddings
 
     def get_or_create_collection(self):
         return PGVector(
-            collection_name = self.collection_name,
-            connection_string = self.connection,
-            embedding_function = self.embeddings
+            collection_name=self.collection_name,
+            connection_string=self.connection,
+            embedding_function=self.embeddings
         )
 
     def store_docs_to_collection(self, document_id, docs, document_path):
@@ -261,7 +263,7 @@ class VectorStorePostgresVector:
             ids.append(f"{document_id}")
         vector_db.add_texts(texts, metadatas, ids=ids)
         return True
-        
+
     def delete_documents_from_collection(self, document_id):
         vector_db = self.get_or_create_collection()
         vector_db.delete([f"{document_id}"])
@@ -269,18 +271,14 @@ class VectorStorePostgresVector:
     def check_if_record_exist(self, document_id):
         is_rec_exist = False
         try:
-            with psycopg2.connect(
-                host=constants.DBHOST,
-                database=constants.DBNAME,
-                user=constants.DBUSER,
-                password=constants.DBPW) as db:
+            with psycopg2.connect(host=constants.DBHOST, database=constants.DBNAME, user=constants.DBUSER, password=constants.DBPW) as db:
                 cursor = db.cursor()
                 cursor.execute("SELECT to_regclass('langchain_pg_embedding');")
                 record = cursor.fetchone()
                 if record:
                     record = record[0]
                     if record == 'langchain_pg_embedding':
-                        cursor.execute("SELECT EXISTS (SELECT 1 FROM langchain_pg_embedding WHERE custom_id = %s LIMIT 1)",(document_id,))
+                        cursor.execute("SELECT EXISTS (SELECT 1 FROM langchain_pg_embedding WHERE custom_id = %s LIMIT 1)", (document_id,))
                         record = cursor.fetchone()
                         record = record[0]
                         is_rec_exist = record
@@ -291,19 +289,17 @@ class VectorStorePostgresVector:
     def delete_file_embeddings_from_collection(self, pdf_id):
         is_rec_exist = True
         try:
-            with psycopg2.connect(
-                host=constants.DBHOST,
-                database=constants.DBNAME,
-                user=constants.DBUSER,
-                password=constants.DBPW) as db:
+            with psycopg2.connect(host=constants.DBHOST, database=constants.DBNAME, user=constants.DBUSER, password=constants.DBPW) as db:
                 cursor = db.cursor()
                 cursor.execute("DELETE FROM langchain_pg_embedding WHERE custom_id = %s", (pdf_id,))
                 is_rec_exist = False
         except Exception:
             pass
         return {'is_rec_exist': is_rec_exist}
+
+
 # Example usage
-if __name__ == "__main__":   
+if __name__ == "__main__":
     db = PDFDataDatabase()
     db.connect()
     db.create_table()
