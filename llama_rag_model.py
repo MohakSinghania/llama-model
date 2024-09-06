@@ -1,20 +1,25 @@
 import re
 import os
+import uuid
+import boto3
 import shutil
+import tempfile
 import constants
+from io import BytesIO
 from pprint import pprint
-from database import PDFDataDatabase
+from database import PDFDataDatabase, VectorStorePostgresVector
 from langchain_chroma import Chroma
 from langgraph.graph import END, StateGraph
-from typing import Annotated, Dict, TypedDict
+from typing import Annotated, Dict, TypedDict, Any
 from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_verbose, set_debug
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.document_loaders import S3FileLoader
+from langchain_community.document_loaders import PyMuPDFLoader, PyPDFLoader
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
 
 set_debug(True)
 set_verbose(True)
@@ -39,120 +44,134 @@ class GraphState(TypedDict):
 class llama_model:
     def __init__(self) -> None:
         self.local_llm = constants.LOCAL_LLM
-        self.pdf_directory = constants.PDF_DIRECTORY
+        self.pdf_directory_class = constants.PDF_DIRECTORY_CLASS
         self.persist_directory = constants.PERSIST_DIRECTORY
-        self.huggingface_model = constants.HUGGINGFACE_MODEL
         self.pdf_directory_all = constants.PDF_DIRECTORY_ALL
         self.persist_directory_all = constants.PERSIST_DIRECTORY_ALL
+        self.embedding = HuggingFaceEmbeddings(model_name=constants.HUGGINGFACE_MODEL)
+        self.s3_client = boto3.client(
+                            's3',
+                            aws_access_key_id=constants.ACCESS_KEY,
+                            aws_secret_access_key=constants.SECRET_KEY
+                        )
 
-    def _pdf_file_save_class(self, teacher_id, pdf_file, class_name):
-        """Saves the PDF file locally if it does not already exist."""
-        pdf_path = os.path.join(self.pdf_directory, class_name)
+    def _delete_s3_file(self, s3_file_key):
+        # Delete the file from the S3 bucket
+        try:
+            bucket_name = constants.BUCKETNAME
+            self.s3_client.delete_object(Bucket=bucket_name, Key=s3_file_key)
+            return True
+        except Exception:
+            return False
 
-        # Ensure the directory exists
-        os.makedirs(pdf_path, exist_ok=True)
+    def _get_docs_split(self, pdf_files) -> Any:
+        docs_list = []
+        # for file in pdf_files:
+        with tempfile.NamedTemporaryFile(delete=True) as temp_file:
+            temp_file.write(pdf_files.getvalue())
+            temp_file_path = temp_file.name
+            loaded_docs = PyMuPDFLoader(temp_file_path).load()
 
-        file_name = f"{class_name}_{pdf_file.filename}"
-        pdf_file_path = os.path.join(pdf_path, file_name)
-        if not os.path.exists(pdf_file_path):
-            pdf_file.save(pdf_file_path)
+        # Ensure that loaded_docs is processed correctly
+        for doc in loaded_docs:
+            if isinstance(doc, tuple):
+                # Assuming the tuple structure is like (page_number, page_content)
+                page_number, page_content = doc
+                docs_list.append({'page_content': page_content})
+            else:
+                # If it's already in the desired format, just add it
+                docs_list.append(doc)
+        text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
+        doc_split = text_splitter.split_documents(docs_list)
+        return doc_split
+
+    def _pdf_file_save(self, teacher_id, pdf_file) -> Dict:
+        """Saves the PDF file in S3 Bucket if it does not already exist."""
+        bucket_name = constants.BUCKETNAME
+        pdf_file_path = f"{self.pdf_directory_all}{pdf_file.filename}"
+        pdf_uuid = uuid.uuid4()
+
+        try:
+            self.s3_client.upload_fileobj(pdf_file, bucket_name, pdf_file_path)
+            print(f"File uploaded successfully to {pdf_file_path}")
+        except Exception as e:
+            print(f"Failed to upload file: {e}")
 
         db.connect()
         db.insert_or_update_data(
+            pdf_id= pdf_uuid,
+            upload_by=teacher_id,  # Example teacher ID
+            pdf_file_name=pdf_file.filename,
+            pdf_path=pdf_file_path,
+        )
+        db.close_connection()
+        return {'pdf_id': pdf_uuid, "pdf_path": pdf_file_path}
+
+    def _pdf_file_save_class(self, teacher_id, pdf_file, class_name):
+        """Saves the PDF file in S3 Bucket if it does not already exist."""
+        bucket_name = constants.BUCKETNAME
+        file_name = f"{class_name}_{pdf_file.filename}"
+        pdf_file_path = f"{self.pdf_directory_class}{class_name}/{file_name}"
+        pdf_uuid = uuid.uuid4()
+
+        try:
+            self.s3_client.upload_fileobj(pdf_file, bucket_name, pdf_file_path)
+            print(f"File uploaded successfully to {pdf_file_path}")
+        except Exception as e:
+            print(f"Failed to upload file: {e}")
+
+        db.connect()
+        db.insert_or_update_data(
+            pdf_id= pdf_uuid,
             upload_by=teacher_id,  # Example teacher ID
             pdf_file_name=file_name,
             pdf_path=pdf_file_path,
             class_name=class_name,
         )
         db.close_connection()
+        return {'pdf_id': pdf_uuid, "pdf_path": pdf_file_path}
 
-    def _pdf_file_save(self, teacher_id, pdf_file):
-        """Saves the PDF file locally if it does not already exist."""
-        pdf_path = self.pdf_directory_all
+    def _create_embedding_all(self, pdf_id, pdf_path, class_name=None) -> dict:
+        bucket_name = constants.BUCKETNAME
+        
+        response = self.s3_client.list_objects_v2(Bucket=bucket_name, Prefix=pdf_path)
+        if 'Contents' in response:
+            if response['Contents'][0]['Key'].endswith('.pdf'):
+                pdf_file = self.s3_client.get_object(Bucket=bucket_name, Key=response['Contents'][0]['Key'])['Body'].read()
+                pdf_files = (BytesIO(pdf_file))
 
-        # Ensure the directory exists
-        os.makedirs(pdf_path, exist_ok=True)
-
-        pdf_file_path = os.path.join(pdf_path, pdf_file.filename)
-        if not os.path.exists(pdf_file_path):
-            pdf_file.save(pdf_file_path)
-
-        db.connect()
-        db.insert_or_update_data(
-            upload_by=teacher_id,  # Example teacher ID
-            pdf_file_name=pdf_file.filename,
-            pdf_path=pdf_file_path,
-        )
-        db.close_connection()
-
-    def _create_embedding(self, class_name) -> dict:    
-        pdf_directory = os.path.join(self.pdf_directory, class_name)
-
-        # Load PDF documents
-        pdf_files = [os.path.join(pdf_directory, file) for file in os.listdir(pdf_directory) if file.endswith('.pdf')]
-        docs = [PyMuPDFLoader(file).load() for file in pdf_files]
-        docs_list = [item for sublist in docs for item in sublist]
-
-        # Split documents into chunks
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
-        doc_splits = text_splitter.split_documents(docs_list)
+        doc_split = self._get_docs_split(pdf_files)
         try:
             # Create a vector store
-            persist_directory = os.path.join(self.persist_directory, class_name)
-            if os.path.exists(persist_directory):
-                shutil.rmtree(persist_directory)
-            os.makedirs(persist_directory, exist_ok=True)
-            Chroma.from_documents(
-                                documents=doc_splits,
-                                collection_name=f"{class_name}",
-                                embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
-                                persist_directory=f"{persist_directory}"
-                                )
-            return {'message': 'PDF Uploaded Successfully', 'status': 201}
+            if class_name is None:
+                vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
+                document_present_or_not = vector_store.check_if_record_exist(pdf_id)
+                if document_present_or_not['is_rec_exist'] == False:
+                    pdf_id = str(pdf_id)
+                    status = vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                    return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                else:
+                    return {'message': 'PDF is already Uploaded', 'status': 203}
+            else:
+                vector_store = VectorStorePostgresVector(class_name, self.embedding)
+                document_present_or_not = vector_store.check_if_record_exist(pdf_id)
+                if document_present_or_not['is_rec_exist'] == False:
+                    pdf_id = str(pdf_id)
+                    status = vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                    return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                else:
+                    return {'message': 'PDF is already Uploaded', 'status': 203}                
         except Exception:
-            return {'message': 'PDF not Uploaded Successfully', 'status': 400}
+            return {'message': 'Failed to Upload the PDF', 'status': 401}   
 
-    def _create_embedding_all(self) -> dict:
-        pdf_directory = self.pdf_directory_all
 
-        # Load PDF documents
-        pdf_files = [os.path.join(pdf_directory, file) for file in os.listdir(pdf_directory) if file.endswith('.pdf')]
-        docs = [PyMuPDFLoader(file).load() for file in pdf_files]
-        docs_list = [item for sublist in docs for item in sublist]
-
-        # Split documents into chunks
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
-        doc_splits = text_splitter.split_documents(docs_list)
-        try:
-            # Create a vector store
-            persist_directory = os.path.join(self.persist_directory_all, "all_pdf_files")
-            if os.path.exists(persist_directory):
-                shutil.rmtree(persist_directory)
-            os.makedirs(persist_directory, exist_ok=True)
-            Chroma.from_documents(
-                                documents=doc_splits,
-                                collection_name="all_pdf_files",
-                                embedding=HuggingFaceEmbeddings(model_name=self.huggingface_model),
-                                persist_directory=f"{persist_directory}"
-                                )
-            return {'message': 'PDF Uploaded Successfully', 'status': 201}
-        except Exception:
-            return {'message': 'PDF not Uploaded Successfully', 'status': 400}
-
-    def _vectorstore_retriever(self, persist_directory, class_name=None):
+    def _vectorstore_retriever(self, class_name=None):
         if class_name is not None:
-            vectorstore = Chroma(
-                        collection_name=f"{class_name}",
-                        embedding_function=HuggingFaceEmbeddings(model_name=self.huggingface_model),
-                        persist_directory=f"{persist_directory}"
-                    )
+            vector_store = VectorStorePostgresVector(class_name, self.embedding)
+            return vector_store.get_or_create_collection().as_retriever()
         else:
-            vectorstore = Chroma(
-                        collection_name="all_pdf_files",
-                        embedding_function=HuggingFaceEmbeddings(model_name=self.huggingface_model),
-                        persist_directory=f"{persist_directory}"
-                    )
-        return vectorstore.as_retriever()
+            vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
+            return vector_store.get_or_create_collection().as_retriever()      
 
     def _get_answer_to_query(self, query, class_name=None):
         try:
@@ -160,11 +179,9 @@ class llama_model:
             llm_without_format = ChatOllama(model=local_llm, temperature=0)
 
             if class_name is not None:
-                persist_directory = os.path.join(self.persist_directory, class_name)
-                retriever = self._vectorstore_retriever(persist_directory, class_name)
+                retriever = self._vectorstore_retriever(class_name)
             else:
-                persist_directory = os.path.join(self.persist_directory_all, "all_pdf_files")
-                retriever = self._vectorstore_retriever(persist_directory)
+                retriever = self._vectorstore_retriever()
 
             # Nodes
             def retrieve(state):
@@ -200,10 +217,13 @@ class llama_model:
 
                 # Prompt
                 prompt = PromptTemplate(
-                        template="""You are an assistant for question-answering tasks.
-                        Treat as a Question , regardless of punctuation.
-                        Use the following pieces of retrieved context to answer the question.
-                        If the Question does not belongs to the Context, just say "FALLBACK".
+                        template="""You are an assistant for question-answering tasks. \n
+                        Treat as a Question , regardless of punctuation. \n
+                        Use the following pieces of retrieved context to answer the question. \n
+                        If the Question does not belongs to the Context, just say "FALLBACK",
+                        don't give information based on your own Knowledge base, 
+                        just say or provide answer as "FALLBACK". \n
+                        if the Context is a empty list then also say or provide answer as "FALLBACK". \n
 
                         Question: {question}
                         Context: {context}
@@ -248,6 +268,8 @@ class llama_model:
                     Here is the user question: {question} \n
                     If the document contains keywords related to the user question,
                     grade it as relevant. \n
+                    If the document does not contain Maximum keywords or is a empty list,
+                    grade it as irrelevant. \n
                     It does not need to be a stringent test. The goal is to filter out
                     erroneous retrievals. \n
                     Give a binary score of 'yes' or 'no' score to indicate whether the document
@@ -446,21 +468,46 @@ class llama_model:
         except Exception:
             return {'message': 'Answer is not available in the PDF', 'status': 404, 'question': query, 'answer': answer}
 
-    def _display_files(self, class_name):
-        db.connect()
-        filenames = db.get_files_by_class(class_name)
-        db.close_connection()
-        if filenames != []:
-            return {'message': f'The List of files for {class_name}', 'status': 200, 'filenames': filenames}
-        else:
-            return {'message': f'There is no files for {class_name}', 'status': 404, 'filenames': filenames}
-
-    def _delete_files(self, file_name, file_path, class_name):
-        if os.path.exists(file_path):
-            os.remove(file_path)
+    def _display_files(self, admin_id, class_name):
+        if class_name != 'None':
             db.connect()
-            db.delete_record(file_name, file_path, class_name)
+            filenames = db.get_files_by_class(class_name)
             db.close_connection()
-            return {'status': 200}
+            if filenames != []:
+                return {'message': f'The List of files for {class_name}', 'status': 200, 'filenames': filenames}
+            else:
+                return {'message': f'There is no files for {class_name}', 'status': 404, 'filenames': filenames}
         else:
-            return {'status': 401}
+            db.connect()
+            filenames = db.get_files_by_class()
+            db.close_connection()
+            if filenames != []:
+                return {'message': f'The List of files for {class_name}', 'status': 200, 'filenames': filenames}
+            else:
+                return {'message': f'There is no files for {class_name}', 'status': 404, 'filenames': filenames}
+
+
+    def _delete_files(self, file_id, file_name, file_path, class_name):
+        import pdb;pdb.set_trace()
+        if class_name != 'None':
+            vector_store = VectorStorePostgresVector(class_name, self.embedding)
+            embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
+            file_status = db.delete_record(file_id, file_name, class_name)
+            if file_status['pdf_path'] is not None:
+               status = self._delete_s3_file(file_status['pdf_path'])
+            if status == True:
+                return {'status': 200}
+            else:
+                return {'status': 401}
+        else:
+            vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
+            embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
+            file_status = db.delete_record(file_id, file_name)
+            import pdb;pdb.set_trace()
+            status = False
+            if file_status['pdf_path'] is not None:
+               status = self._delete_s3_file(file_status['pdf_path'])
+            if status == True:
+                return {'status': 200}
+            else:
+                return {'status': 401}

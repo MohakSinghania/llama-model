@@ -4,9 +4,8 @@ import ollama
 import secrets
 import constants
 from flask_cors import CORS
-from flask import Flask, request, jsonify, session, send_file
-
 from llama_rag_model import llama_model
+from flask import Flask, request, jsonify, session, send_file
 
 app = Flask(__name__)
 CORS(app)
@@ -48,10 +47,10 @@ def upload_pdf_class():
         return jsonify({'message': 'Please Provide PDF', 'status': 400})
     for file in pdf_file:
         if file.filename.endswith(".pdf"):
-            rag_function._pdf_file_save_class(teacher_id, file, class_name)
+            pdf_details = rag_function._pdf_file_save_class(teacher_id, file, class_name)
+            message = rag_function._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'], class_name)
         else:
             invalid_files.append(file.filename)
-    message = rag_function._create_embedding(class_name)
 
     if invalid_files != []:
         invalid_message = f'{invalid_files} files are invalid'
@@ -68,9 +67,9 @@ def rag_model_class():
     if not user_query or not student_id:
         return jsonify({'message': 'Missing query or student ID', 'status': 400})
 
-    pdf_file_path = os.path.join(constants.PDF_DIRECTORY, class_name)
-    if not os.path.exists(pdf_file_path):
-        return jsonify({'message': f'There is no PDF for {class_name}', 'status': 404})
+    # pdf_file_path = os.path.join(constants.PDF_DIRECTORY, class_name)
+    # if not os.path.exists(pdf_file_path):
+    #     return jsonify({'message': f'There is no PDF for {class_name}', 'status': 404})
 
     if student_id not in session:
         data = {"class_name": class_name}
@@ -101,10 +100,10 @@ def upload_pdf():
         return jsonify({'message': 'Please Provide PDF', 'status': 400})
     for file in pdf_file:
         if file.filename.endswith(".pdf"):
-            rag_function._pdf_file_save(teacher_id, file)
+            pdf_details = rag_function._pdf_file_save(teacher_id, file)
+            message = rag_function._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'])
         else:
-            invalid_files.append(file.filename)
-    message = rag_function._create_embedding_all()
+            invalid_files.append(file.filename)            
 
     if invalid_files != []:
         invalid_message = f'{invalid_files} files are invalid'
@@ -129,11 +128,12 @@ def rag_model():
 
 @app.route('/display-files', methods=['GET', 'POST'])
 def display_files():
-    class_name = request.args.get('class_name')
-    if not class_name:
-        return jsonify({'message': 'Please Provide Class Name', 'status': 400})
+    class_name = request.args.get('class_name', "None")
+    admin_id = request.args.get('admin_id', "")
+    # if not class_name:
+    #     return jsonify({'message': 'Please Provide Class Name', 'status': 400})
     try:
-        file_names = rag_function._display_files(class_name)
+        file_names = rag_function._display_files(admin_id, class_name)
         return jsonify(file_names)
     except Exception as e:
         return jsonify({'message': f'Error fetching files {str(e)}', 'status': 404})
@@ -142,20 +142,21 @@ def display_files():
 @app.route('/delete-files', methods=['DELETE'])
 def delete_files():
     # Get JSON payload from the request
+    import pdb;pdb.set_trace()
     data = request.json
+    file_id = data.get('file_id')
     file_name = data.get('file_name')
     file_path = data.get('file_path')
-    class_name = data.get('class_name')
+    class_name = data.get('class_name', "None")
 
     # Check if file_path is provided
-    if not file_path:
+    if not file_path and not file_id:
         return jsonify({'message': 'Please provide a file to delete', 'status': 400})
 
     # Call the function to delete files
-    delete_message = rag_function._delete_files(file_name, file_path, class_name)
+    delete_message = rag_function._delete_files(file_id, file_name, file_path, class_name)
     try:
         if delete_message['status'] == 201:
-            rag_function._create_embedding(class_name)
             return jsonify({'message': 'PDF deleted successfully', 'status': 201})
         else:
             return jsonify({'message': 'There is no such PDF Files to delete', 'status': 401})
