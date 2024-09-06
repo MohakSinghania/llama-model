@@ -1,6 +1,16 @@
-
+import uuid
+import psycopg2
 import constants
-from dependency import *
+from datetime import datetime
+from langchain_community.vectorstores import PGVector
+from psycopg2.extensions import register_adapter, AsIs
+
+# Register adapter for UUID
+def adapt_uuid(uuid_val):
+    return AsIs(f"'{str(uuid_val)}'")
+
+register_adapter(uuid.UUID, adapt_uuid)
+
 
 class PDFDataDatabase:
     def __init__(self):
@@ -31,12 +41,12 @@ class PDFDataDatabase:
 
         create_table_query = '''
             CREATE TABLE IF NOT EXISTS pdf_data (
+                pdf_id UUID NOT NULL PRIMARY KEY,
                 upload_by INTEGER NOT NULL,
                 pdf_file_name TEXT NOT NULL UNIQUE,
                 pdf_path TEXT NOT NULL,
                 upload_date_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                class TEXT NOT NULL,
-                PRIMARY KEY (pdf_file_name)
+                class TEXT
             );
         '''
 
@@ -49,7 +59,7 @@ class PDFDataDatabase:
             print(f"Error creating table: {e}")
             self.connection.rollback()
 
-    def insert_or_update_data(self, upload_by, pdf_file_name, pdf_path, class_name, upload_date_time=None):
+    def insert_or_update_data(self, pdf_id, upload_by, pdf_file_name, pdf_path, class_name=None, upload_date_time=None):
         if self.connection is None:
             print("No database connection. Call connect() first.")
             return
@@ -58,8 +68,8 @@ class PDFDataDatabase:
             upload_date_time = datetime.now()
 
         upsert_query = '''
-            INSERT INTO pdf_data (upload_by, pdf_file_name, pdf_path, upload_date_time, class)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO pdf_data (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, class)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (pdf_file_name)
             DO UPDATE SET
                 upload_by = EXCLUDED.upload_by,
@@ -68,7 +78,7 @@ class PDFDataDatabase:
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(upsert_query, (upload_by, pdf_file_name, pdf_path, upload_date_time, class_name))
+                cursor.execute(upsert_query, (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, class_name))
                 self.connection.commit()
                 print("Data inserted or updated successfully.")
         except Exception as e:
@@ -76,32 +86,56 @@ class PDFDataDatabase:
             self.connection.rollback()
 
 
-    def get_files_by_class(self, class_name):
+    def get_files_by_class(self, class_name=None):
         if self.connection is None:
             print("No database connection. Call connect() first.")
             return []
 
         try:
-            with self.connection.cursor() as cursor:
-                # Retrieve file names, upload_by, and upload_date_time for the specified class
-                cursor.execute('''
-                    SELECT pdf_file_name, pdf_path, upload_by, upload_date_time
-                    FROM pdf_data
-                    WHERE class = %s;
-                ''', (class_name,))
-                
-                results = cursor.fetchall()
-                # Convert the result to a list of dictionaries
-                files = [
-                    {
-                        "pdf_file_name": row[0],
-                        "pdf_path": row[1],
-                        "upload_by": row[2],
-                        "upload_date_time": row[3]
-                    }
-                    for row in results
-                ]
-                return files
+            if class_name is not None:
+                with self.connection.cursor() as cursor:
+                    # Retrieve file names, upload_by, and upload_date_time for the specified class
+                    cursor.execute('''
+                        SELECT pdf_id, pdf_file_name, pdf_path, upload_by, upload_date_time
+                        FROM pdf_data
+                        WHERE class = %s;
+                    ''', (class_name,))
+                    
+                    results = cursor.fetchall()
+                    # Convert the result to a list of dictionaries
+                    files = [
+                        {
+                            "pdf_id": row[0],
+                            "pdf_file_name": row[1],
+                            "pdf_path": row[2],
+                            "upload_by": row[3],
+                            "upload_date_time": row[4]
+                        }
+                        for row in results
+                    ]
+                    return files
+            else:
+                with self.connection.cursor() as cursor:
+                    # Retrieve file names, upload_by, and upload_date_time for the specified class
+                    cursor.execute('''
+                        SELECT pdf_id, pdf_file_name, pdf_path, upload_by, upload_date_time
+                        FROM pdf_data
+                        WHERE class IS NULL;
+                    ''')
+                    
+                    results = cursor.fetchall()
+                    # Convert the result to a list of dictionaries
+                    files = [
+                        {
+                            "pdf_id": row[0],
+                            "pdf_file_name": row[1],
+                            "pdf_path": row[2],
+                            "upload_by": row[3],
+                            "upload_date_time": row[4]
+                        }
+                        for row in results
+                    ]
+                    return files
 
         except Exception as e:
             print(f"Error retrieving data: {e}")
@@ -133,34 +167,144 @@ class PDFDataDatabase:
             print(f"Error retrieving data: {e}")
             return None
 
-    def delete_record(self, pdf_file_name, pdf_file_path, class_name):
+    def delete_record(self, pdf_id, pdf_file_name, class_name=None):
         if self.connection is None:
             print("No database connection. Call connect() first.")
-            return
-
-        try:
-            with self.connection.cursor() as cursor:
-                # Delete the record matching the given upload_by, pdf_file_name, and class
-                cursor.execute('''
-                    DELETE FROM pdf_data
-                    WHERE pdf_file_name = %s AND pdf_path = %s AND class = %s;
-                ''', (pdf_file_name, pdf_file_path, class_name))
-                
-                self.connection.commit()
-                print(f"Record with pdf_file_name = '{pdf_file_name}', and class = '{class_name}' deleted successfully.")
-                
-        except Exception as e:
-            print(f"Error deleting record: {e}")
-            self.connection.rollback()
-
+            return {"pdf_path": None}
+        if class_name is not None:
+            try:
+                with self.connection.cursor() as cursor:
+                    # Delete the record matching the given upload_by, pdf_file_name, and class
+                    cursor.execute('''
+                        SELECT pdf_path FROM pdf_data
+                        WHERE pdf_id = %s
+                    ''', (pdf_id,))
+                    pdf_path = cursor.fetchone()
+                    pdf_path = record[0]
+                    cursor.execute('''
+                        DELETE FROM pdf_data
+                        WHERE pdf_id = %s AND pdf_file_name = %s AND class = %s;
+                    ''', (pdf_id, pdf_file_name, class_name))
+                    
+                    self.connection.commit()
+                    return {"pdf_path": pdf_path}
+                    
+            except Exception as e:
+                print(f"Error deleting record: {e}")
+                self.connection.rollback()
+                return {"pdf_path": None}
+        else:
+            try:
+                with self.connection.cursor() as cursor:
+                    # Delete the record matching the given upload_by, pdf_file_name, and class
+                    cursor.execute('''
+                        SELECT pdf_path FROM pdf_data
+                        WHERE pdf_id = %s
+                    ''', (pdf_id,))
+                    pdf_path = cursor.fetchone()
+                    pdf_path = record[0]
+                    cursor.execute('''
+                        DELETE FROM pdf_data
+                        WHERE pdf_id = %s AND pdf_file_name = %s AND class IS NULL;
+                    ''', (pdf_id, pdf_file_name))
+                    
+                    self.connection.commit()
+                    return {"pdf_path": pdf_path}
+                    
+            except Exception as e:
+                print(f"Error deleting record: {e}")
+                self.connection.rollback()
+                return {"pdf_path": None}
+    
     def close_connection(self):
         if self.connection:
             self.connection.close()
             print("Database connection closed.")
 
-# # Example usage
-# if __name__ == "__main__":   
-#     db = PDFDataDatabase()
-#     db.connect()
-#     db.create_table()
-#     db.close_connection()
+class VectorStorePostgresVector:
+    def __init__ (self, collection_name, embeddings):
+        self.collection_name = collection_name
+        self.connection = constants.CONNECTION_SETTINGS
+        self.embeddings = embeddings
+
+    def get_or_create_collection(self):
+        return PGVector(
+            collection_name = self.collection_name,
+            connection_string = self.connection,
+            embedding_function = self.embeddings
+        )
+
+    def store_docs_to_collection(self, document_id, docs, document_path):
+        for doc in docs:
+            inner_metadata = {
+                'id': document_id, 'source': document_path
+            }
+            for k, v in doc.metadata.items():
+                if k in ['id', 'page', 'source', 'page_number', 'row']:
+                    if v is None:
+                        inner_metadata[k] = ""
+                    else:
+                        if k == "page_number":
+                            k = 'page'
+                            v = int(v) - 1
+                        if k == "source":
+                            if v != document_path:
+                                v = document_path
+                        inner_metadata[k] = str(v)
+            doc.metadata = inner_metadata
+        vector_db = self.get_or_create_collection()
+
+        texts, metadatas, ids = [], [], []
+        for doc in docs:
+            texts.append(doc.page_content)
+            metadatas.append(doc.metadata)
+            ids.append(f"{document_id}")
+        vector_db.add_texts(texts, metadatas, ids=ids)
+        return True
+        
+    def delete_documents_from_collection(self, document_id):
+        vector_db = self.get_or_create_collection()
+        vector_db.delete([f"{document_id}"])
+
+    def check_if_record_exist(self, document_id):
+        is_rec_exist = False
+        try:
+            with psycopg2.connect(
+                host=constants.DBHOST,
+                database=constants.DBNAME,
+                user=constants.DBUSER,
+                password=constants.DBPW) as db:
+                cursor = db.cursor()
+                cursor.execute("SELECT to_regclass('langchain_pg_embedding');")
+                record = cursor.fetchone()
+                if record:
+                    record = record[0]
+                    if record == 'langchain_pg_embedding':
+                        cursor.execute("SELECT EXISTS (SELECT 1 FROM langchain_pg_embedding WHERE custom_id = %s LIMIT 1)",(document_id,))
+                        record = cursor.fetchone()
+                        record = record[0]
+                        is_rec_exist = record
+        except Exception:
+            pass
+        return {'is_rec_exist': is_rec_exist}
+
+    def delete_file_embeddings_from_collection(self, pdf_id):
+        is_rec_exist = True
+        try:
+            with psycopg2.connect(
+                host=constants.DBHOST,
+                database=constants.DBNAME,
+                user=constants.DBUSER,
+                password=constants.DBPW) as db:
+                cursor = db.cursor()
+                cursor.execute("DELETE FROM langchain_pg_embedding WHERE custom_id = %s", (pdf_id,))
+                is_rec_exist = False
+        except Exception:
+            pass
+        return {'is_rec_exist': is_rec_exist}
+# Example usage
+if __name__ == "__main__":   
+    db = PDFDataDatabase()
+    db.connect()
+    db.create_table()
+    db.close_connection()
