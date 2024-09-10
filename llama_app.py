@@ -65,10 +65,6 @@ def rag_model_class():
     if not user_query or not student_id:
         return jsonify({'message': 'Missing query or student ID', 'status': 400})
 
-    # pdf_file_path = os.path.join(constants.PDF_DIRECTORY, class_name)
-    # if not os.path.exists(pdf_file_path):
-    #     return jsonify({'message': f'There is no PDF for {class_name}', 'status': 404})
-
     if student_id not in session:
         data = {"class_name": class_name}
         session[student_id] = data
@@ -124,12 +120,77 @@ def rag_model():
         return jsonify({'message': f'Error generating answer: {str(e)}', 'status': 404})
 
 
+@app.route('/upload-pdf-hierarchy', methods=['GET', 'POST'])
+def upload_pdf_class():
+    pdf_file = request.files.getlist('pdf_file')
+    teacher_id = request.form['teacher_id']
+    school_college_competitiveexam = request.form['s_c_ce_type']
+    board_type = request.form['board_type', None]
+    state_board = request.form['state_board_type', None]
+    class_name = request.form['class_name', None]
+    college_name_type = request.form['college_name_type', None]
+    course_type = request.form['course_type', None]
+    subject_type = request.form['subject_type', None]
+
+    invalid_files = []
+
+    if pdf_file == []:
+        return jsonify({'message': 'Please Provide PDF', 'status': 400})
+    for file in pdf_file:
+        if file.filename.endswith(".pdf"):
+            if school_college_competitiveexam == "school":
+                pdf_details = rag_function._pdf_file_save_selection(file, teacher_id, school_college_competitiveexam, board_type=board_type, state_board=state_board, class_name=class_name)
+                message = rag_function._create_embedding_selection(pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam, board_type=board_type, state_board=state_board, class_name=class_name)
+            elif school_college_competitiveexam == "college":
+                pdf_details = rag_function._pdf_file_save_selection(file, teacher_id, school_college_competitiveexam, college_name=college_name_type, stream_name=course_type, subject_name=subject_type)
+                message = rag_function._create_embedding_selection(pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam, college_name=college_name_type, stream_name=course_type, subject_name=subject_type)
+            else:
+                pass
+        else:
+            invalid_files.append(file.filename)
+
+    if invalid_files != []:
+        invalid_message = f'{invalid_files} files are invalid'
+        return jsonify({'message': f'PDF Uploaded Successfully and {invalid_message}', 'status': 201})
+    else:
+        return jsonify(message)
+
+@app.route('/rag-model-school-hierarchy', methods=['GET', 'POST'])
+def rag_model_class():
+    user_query = request.args.get("user_query")
+    student_id = request.args.get('student_id')
+    school_college_competitiveexam = request.args.get('s_c_ce_type')
+    board_type = request.args.get('board_type') or None
+    state_board = request.args.get('state_board_type') or None
+    class_name = request.args.get('class_name') or None
+    college_name_type = request.args.get('college_name_type') or None
+    course_type = request.args.get('course_type') or None
+    subject_type = request.args.get('subject_type') or None
+
+    if not user_query or not student_id:
+        return jsonify({'message': 'Missing query or student ID', 'status': 400})
+
+    data = {
+        "school_college_ce": school_college_competitiveexam,
+        "board": board_type,
+        "state_board": state_board,
+        "class_name": class_name,
+        "college_name": college_name_type,
+        "stream_name": course_type,
+        "subject": subject_type
+    }
+
+    try:
+        answer = rag_function._get_answer_to_query_selection(user_query, data)
+        return jsonify(answer)
+
+    except Exception as e:
+        return jsonify({'message': f'Error generating answer: {str(e)}', 'status': 404})
+
 @app.route('/display-files', methods=['GET', 'POST'])
 def display_files():
     class_name = request.args.get('class_name', "None")
     admin_id = request.args.get('admin_id', "")
-    # if not class_name:
-    #     return jsonify({'message': 'Please Provide Class Name', 'status': 400})
     try:
         file_names = rag_function._display_files(admin_id, class_name)
         return jsonify(file_names)
