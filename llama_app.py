@@ -14,6 +14,11 @@ ALLOWED_BASE_DIR = '/home/ubuntu/llama-model/pdf_files'
 rag_function = llama_model()
 
 
+@app.route("/")
+def hello():
+    return "<h1 style='color:blue'>Hello There!</h1>"
+
+
 @app.route('/ollama-chat', methods=['GET', 'POST'])
 def ollama_chat():
     user_query = request.args.get("user_query")
