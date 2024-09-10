@@ -1,3 +1,4 @@
+import pytz
 import uuid
 import psycopg2
 import constants
@@ -67,21 +68,21 @@ class PDFDataDatabase:
             return
 
         create_table_query = '''
-            CREATE TABLE IF NOT EXISTS pdf_data_selection_type (
-                pdf_id UUID NOT NULL PRIMARY KEY,
-                upload_by INTEGER NOT NULL,
-                pdf_file_name TEXT NOT NULL UNIQUE,
-                pdf_path TEXT NOT NULL,
-                upload_date_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                school_college_ce TEXT NOT NULL,
-                board_type TEXT,
-                state_board TEXT,
-                class_name TEXT,
-                college_name TEXT,
-                stream_name TEXT,
-                subject_name TEXT,
-                competitve_exam_name TEXT
-            )
+                CREATE TABLE IF NOT EXISTS pdf_data_selection_type (
+                    pdf_id UUID NOT NULL PRIMARY KEY,
+                    upload_by INTEGER NOT NULL,
+                    pdf_file_name TEXT NOT NULL UNIQUE,
+                    pdf_path TEXT NOT NULL,
+                    upload_date_time TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+                    school_college_ce TEXT NOT NULL,
+                    board_type TEXT,
+                    state_board TEXT,
+                    class_name TEXT,
+                    college_name TEXT,
+                    stream_name TEXT,
+                    subject_name TEXT,
+                    competitve_exam_name TEXT
+                );
         '''
 
         try:
@@ -101,26 +102,43 @@ class PDFDataDatabase:
         if upload_date_time is None:
             upload_date_time = datetime.now()
 
+        # Convert upload_date_time to IST
+        ist_timezone = pytz.timezone('Asia/Kolkata')
+        upload_date_time = upload_date_time.astimezone(ist_timezone)
+
         upsert_query = '''
             INSERT INTO pdf_data_selection_type (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, school_college_ce, board_type, 
-                                    state_board, class_name, college_name, stream_name, subject_name, competitve_exam_name)
+                                                state_board, class_name, college_name, stream_name, subject_name, competitve_exam_name)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (pdf_file_name)
             DO UPDATE SET
+                pdf_id = EXCLUDED.pdf_id,
                 upload_by = EXCLUDED.upload_by,
-                upload_date_time = EXCLUDED.upload_date_time;
+                pdf_path = EXCLUDED.pdf_path,
+                upload_date_time = EXCLUDED.upload_date_time,
+                school_college_ce = EXCLUDED.school_college_ce,
+                board_type = EXCLUDED.board_type,
+                state_board = EXCLUDED.state_board,
+                class_name = EXCLUDED.class_name,
+                college_name = EXCLUDED.college_name,
+                stream_name = EXCLUDED.stream_name,
+                subject_name = EXCLUDED.subject_name,
+                competitve_exam_name = EXCLUDED.competitve_exam_name;
         '''
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(upsert_query, (data['pdf_id'], data['upload_by'], data['pdf_file_name'], data['pdf_path'], upload_date_time,
-                                                data['school_college_ce'], data['board_type'], data['state_board'], data['class_name'],
-                                                data['college_name'], data['stream_name'], data['subject_name'], data['competitve_exam_name']))
+                cursor.execute(upsert_query, (
+                    data['pdf_id'], data['upload_by'], data['pdf_file_name'], data['pdf_path'], upload_date_time,
+                    data['school_college_ce'], data['board_type'], data['state_board'], data['class_name'],
+                    data['college_name'], data['stream_name'], data['subject_name'], data['competitve_exam_name']
+                ))
                 self.connection.commit()
                 print("Data inserted or updated successfully.")
         except Exception as e:
             print(f"Error inserting or updating data: {e}")
             self.connection.rollback()
+
 
     def insert_or_update_data_class(self, pdf_id, upload_by, pdf_file_name, pdf_path, class_name=None, upload_date_time=None):
         if self.connection is None:
@@ -135,8 +153,11 @@ class PDFDataDatabase:
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (pdf_file_name)
             DO UPDATE SET
+                pdf_id = EXCLUDED.pdf_id,
                 upload_by = EXCLUDED.upload_by,
-                upload_date_time = EXCLUDED.upload_date_time;
+                pdf_path = EXCLUDED.pdf_path,
+                upload_date_time = EXCLUDED.upload_date_time,
+                class = EXCLUDED.class;
         '''
 
         try:

@@ -236,7 +236,7 @@ class llama_model:
             return {'message': 'Failed to Upload the PDF', 'status': 401}
 
     def _vectorstore_retriever(self, data):
-        import pdb;pdb.set_trace()
+        
         if data['school_college_ce'] == 'school':
             if board_type != data['state_board']:
                 vector_store = VectorStorePostgresVector(f"{data['board']}_{data['class_name']}", self.embedding)
@@ -594,7 +594,7 @@ class llama_model:
 #     def _pdf_file_save_s_c_ce_class(self, pdf_file, s_c_ce_type, board_type, class_name):
 #         """Saves the PDF file locally if it does not already exist."""
 #         pdf_path = os.path.join(self.pdf_directory_choice, s_c_ce_type, board_type, class_name)
-#         import pdb;pdb.set_trace()
+#         
 #         # Ensure the directory exists
 #         os.makedirs(pdf_path, exist_ok=True)
         
@@ -642,7 +642,7 @@ class llama_model:
 #         # Split documents into chunks
 #         text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
 #         doc_splits = text_splitter.split_documents(docs_list)
-#         import pdb;pdb.set_trace()
+#         
 #         try:
 #             # Create a vector store
 #             persist_directory = os.path.join(self.persist_directory, class_name)
@@ -673,7 +673,7 @@ class llama_model:
 #         try:
 #             # Create a vector store
 #             persist_directory = os.path.join(self.persist_directory_choice, s_c_ce_type, board_type, class_name)
-#             import pdb;pdb.set_trace()
+#             
 #             file_type = s_c_ce_type+"_"+board_type+"_"+class_name
 #             if os.path.exists(persist_directory):
 #                 shutil.rmtree(persist_directory)
