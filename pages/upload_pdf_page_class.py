@@ -3,7 +3,7 @@ from modules.nav import MenuButtons
 from pages.account import get_roles
 from streamlit_rag_model import llama_model
 
-rag_func = llama_model()
+streamlit_rag_model = llama_model()
 
 if 'authentication_status' not in ss:
     st.switch_page('./pages/account.py')
@@ -21,7 +21,7 @@ if st.button("Upload"):
         st.error("Please upload PDF files")
 
     for file in uploaded_files:
-        rag_func._pdf_file_save_class(file , selected_class)
-
-    message = rag_func._create_embedding(selected_class)
+        pdf_details = streamlit_rag_model._pdf_file_save_class(file, selected_class)
+        message = rag_function._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'])
+    
     st.success(message['message'])

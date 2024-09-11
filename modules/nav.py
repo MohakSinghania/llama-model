@@ -16,14 +16,25 @@ def RAGModelNav():
 def UploadPDFClassNav():
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/upload_pdf_page_class.py", label="Upload PDF's Based On Class", icon='✈️')
 
-def RAGModelClassNav(class_name):
-    ss.class_name = class_name
+def RAGModelClassNav(data):
+    ss.class_name = data['class_name']
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/rag_model_stream_class.py", label="RAG Model Based On Class", icon='📚')
 
-def Page1():
-    st.sidebar.page_link("/home/ubuntu/llama-model/pages/page1.py", label="Upload PDF's Based On Hierarchical Architecture", icon='✈️')
+def UploadPDFHierarchicalNav():
+    st.sidebar.page_link("/home/ubuntu/llama-model/pages/upload_pdf_page_hierarchical.py", label="Upload PDF's Based On Hierarchical Architecture", icon='✈️')
 
-def MenuButtons(class_name, user_roles=None):
+def RAGModelHierarchicalNav(data):
+    ss.school_college_ce = data['school_college_ce']
+    ss.board = data['board']
+    ss.state_board = data['state_board']
+    ss.class_name = data['class_name']
+    ss.college_name = data['college_name']
+    ss.stream_name = data['stream_name']
+    ss.subject = data['subject']
+    st.sidebar.page_link("/home/ubuntu/llama-model/pages/rag_model_stream_hierarchical.py", label="RAG Model Based On Hierarchical Architecture", icon='📚')
+
+
+def MenuButtons(data, user_roles=None):
     if user_roles is None:
         user_roles = {}
     
@@ -44,9 +55,4 @@ def MenuButtons(class_name, user_roles=None):
         if ss.username in admins:
             UploadPDFNav()
             UploadPDFClassNav()
-            Page1()
-
-        # (2) users with user and admin roles have access to page 2.
-        RAGModelNav()
-        RAGModelClassNav(class_name)
-    
+            UploadPDFHierarchicalNav()
