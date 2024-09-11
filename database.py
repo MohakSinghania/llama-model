@@ -107,7 +107,7 @@ class PDFDataDatabase:
         upload_date_time = upload_date_time.astimezone(ist_timezone)
 
         upsert_query = '''
-            INSERT INTO pdf_data_selection_type (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, school_college_ce, board_type, 
+            INSERT INTO pdf_data_selection_type (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, school_college_ce, board_type,
                                                 state_board, class_name, college_name, stream_name, subject_name, competitve_exam_name)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (pdf_file_name)
@@ -138,7 +138,6 @@ class PDFDataDatabase:
         except Exception as e:
             print(f"Error inserting or updating data: {e}")
             self.connection.rollback()
-
 
     def insert_or_update_data_class(self, pdf_id, upload_by, pdf_file_name, pdf_path, class_name=None, upload_date_time=None):
         if self.connection is None:
