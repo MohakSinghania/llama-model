@@ -1,11 +1,15 @@
-from dependency import *
+import yaml
 import constants
+import streamlit as st
+import streamlit_authenticator as stauth
+from yaml.loader import SafeLoader
 from modules.nav_1 import MenuButtons
-
+from streamlit import session_state as ss
 
 # Load the configuration file
 with open(constants.CONFIG_FILENAME) as file:
     config = yaml.load(file, Loader=SafeLoader)
+
 
 def get_roles():
     """Gets user roles based on config file."""
@@ -18,6 +22,7 @@ def get_roles():
         cred = {}
 
     return {username: user_info['role'] for username, user_info in cred['usernames'].items() if 'role' in user_info}
+
 
 def get_user_data(username):
     """Retrieve the class name associated with the logged-in user."""
@@ -33,6 +38,7 @@ def get_user_data(username):
         }
         return data
     return None
+
 
 st.header('Account page')
 
@@ -52,7 +58,7 @@ with login_tab:
     if ss.get("authentication_status"):
         # Retrieve the class name for the logged-in user
         ss.data = get_user_data(ss["username"])
-        authenticator.logout(location='main')    
+        authenticator.logout(location='main')
         st.write(f'Welcome *{ss["name"]}*')
 
     elif ss.get("authentication_status") is False:
@@ -66,24 +72,27 @@ with register_tab:
             role_options = ['admin', 'user']  # Define your role options here
             selected_role = st.selectbox('Select Role', role_options)
             if selected_role == 'user':
-                s_c_ce_type = ["school" , "college" , "competitve_exam"]
+                s_c_ce_type = ["school", "college", "competitve_exam"]
                 selected_s_c_ce_type = st.selectbox('Select Type', s_c_ce_type)
                 if selected_s_c_ce_type == "school":
-                    board_type = ["CBSE" , "ICSE" , "state_board"]
+                    board_type = ["CBSE", "ICSE", "state_board"]
                     selected_board_type = st.selectbox('Select Board Type', board_type)
                     if selected_board_type == "state_board":
                         state_board = [
                                         "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar", "Chhattisgarh",
                                         "Goa", "Gujarat", "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka",
                                         "Kerala", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya",
-                                        "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim", 
+                                        "Mizoram", "Nagaland", "Odisha", "Punjab", "Rajasthan", "Sikkim",
                                         "Tamil Nadu", "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand",
                                         "West Bengal"
                                     ]
                         selected_state_board = st.selectbox('Select State Board Type', state_board)
                     else:
                         selected_state_board = None
-                    class_options = ['class_01', 'class_02', 'class_03', 'class_04', 'class_05', 'class_06', 'class_07', 'class_08', 'class_09', 'class_10', 'class_11', 'class_12']
+                    class_options = [
+                                    'class_01', 'class_02', 'class_03', 'class_04', 'class_05', 'class_06', 'class_07', 'class_08', 'class_09',
+                                    'class_10', 'class_11', 'class_12'
+                                    ]
                     selected_class = st.selectbox('Select Class', class_options)
                     selected_college_name_type = None
                     selected_stream_type = None
@@ -114,13 +123,13 @@ with register_tab:
                 # Add role to config
                 config['credentials']['usernames'][username_of_registered_user]['role'] = selected_role
                 # Initialize class for new user (optional)
-                config['credentials']['usernames'][username_of_registered_user]['school_college_ce'] = selected_s_c_ce_type 
+                config['credentials']['usernames'][username_of_registered_user]['school_college_ce'] = selected_s_c_ce_type
                 if selected_s_c_ce_type == 'school':
                     config['credentials']['usernames'][username_of_registered_user]['Board'] = selected_board_type
                     if selected_board_type != 'state_board':
-                        config['credentials']['usernames'][username_of_registered_user]['State_Board'] = selected_state_board  
+                        config['credentials']['usernames'][username_of_registered_user]['State_Board'] = selected_state_board
                     else:
-                        config['credentials']['usernames'][username_of_registered_user]['State_Board'] = None 
+                        config['credentials']['usernames'][username_of_registered_user]['State_Board'] = None
                     config['credentials']['usernames'][username_of_registered_user]['Class'] = selected_class
                     config['credentials']['usernames'][username_of_registered_user]['College_Name'] = selected_college_name_type
                     config['credentials']['usernames'][username_of_registered_user]['Stream_Name'] = selected_stream_type

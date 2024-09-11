@@ -144,11 +144,23 @@ def upload_pdf_hierarchy():
     for file in pdf_file:
         if file.filename.endswith(".pdf"):
             if school_college_competitiveexam == "school":
-                pdf_details = rag_function._pdf_file_save_selection(teacher_id, file, school_college_competitiveexam, board_type=board_type, state_board=state_board, class_name=class_name)
-                message = rag_function._create_embedding_selection(pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam, board_type=board_type, state_board=state_board, class_name=class_name)
+                pdf_details = rag_function._pdf_file_save_selection(
+                                                                    teacher_id, file, school_college_competitiveexam, board_type=board_type,
+                                                                    state_board=state_board, class_name=class_name
+                                                                )
+                message = rag_function._create_embedding_selection(
+                                                                    pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam,
+                                                                    board_type=board_type, state_board=state_board, class_name=class_name
+                                                                )
             elif school_college_competitiveexam == "college":
-                pdf_details = rag_function._pdf_file_save_selection(teacher_id, file, school_college_competitiveexam, college_name=college_name_type, stream_name=course_type, subject_name=subject_type)
-                message = rag_function._create_embedding_selection(pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam, college_name=college_name_type, stream_name=course_type, subject_name=subject_type)
+                pdf_details = rag_function._pdf_file_save_selection(
+                                                                    teacher_id, file, school_college_competitiveexam, college_name=college_name_type,
+                                                                    stream_name=course_type, subject_name=subject_type
+                                                                )
+                message = rag_function._create_embedding_selection(
+                                                                    pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam,
+                                                                    college_name=college_name_type, stream_name=course_type, subject_name=subject_type
+                                                                )
             else:
                 pass
         else:
@@ -159,6 +171,7 @@ def upload_pdf_hierarchy():
         return jsonify({'message': f'PDF Uploaded Successfully and {invalid_message}', 'status': 201})
     else:
         return jsonify(message)
+
 
 @app.route('/rag-model-hierarchy', methods=['GET', 'POST'])
 def rag_model_hierarchy():
@@ -191,6 +204,7 @@ def rag_model_hierarchy():
 
     except Exception as e:
         return jsonify({'message': f'Error generating answer: {str(e)}', 'status': 404})
+
 
 @app.route('/display-files', methods=['GET', 'POST'])
 def display_files():

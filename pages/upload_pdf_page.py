@@ -1,6 +1,7 @@
-from dependency import *
+import streamlit as st
 from modules.nav import MenuButtons
 from pages.account import get_roles
+from streamlit import session_state as ss
 from streamlit_rag_model import llama_model
 
 streamlit_rag_model = llama_model()
@@ -19,6 +20,6 @@ if st.button("Upload"):
 
     for file in uploaded_files:
         pdf_details = streamlit_rag_model._pdf_file_save(file)
-        message = rag_function._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'])
-    
+        message = streamlit_rag_model._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'])
+
     st.success(message['message'])

@@ -1,7 +1,7 @@
 import streamlit as st
-from streamlit import session_state as ss
 from modules.nav import MenuButtons
 from pages.account import get_roles
+from streamlit import session_state as ss
 
 # If the user reloads or refreshes the page while still logged in,
 # go to the account page to restore the login status. Note reloading

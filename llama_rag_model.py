@@ -50,6 +50,7 @@ class llama_model:
                             aws_access_key_id=constants.ACCESS_KEY,
                             aws_secret_access_key=constants.SECRET_KEY
                         )
+
     def _delete_s3_file(self, s3_file_key):
         # Delete the file from the S3 bucket
         try:
@@ -116,7 +117,7 @@ class llama_model:
             print(f"Failed to upload file: {e}")
 
         db.connect()
-        db.insert_or_update_data(
+        db.insert_or_update_data_class(
             pdf_id=pdf_uuid,
             upload_by=teacher_id,  # Example teacher ID
             pdf_file_name=file_name,
@@ -126,9 +127,12 @@ class llama_model:
         db.close_connection()
         return {'pdf_id': pdf_uuid, "pdf_path": pdf_file_path}
 
-    def _pdf_file_save_selection(self, teacher_id, pdf_file, s_c_ce_type, board_type=None, state_board=None, class_name=None, college_name=None, stream_name=None, subject_name=None) -> Dict:
+    def _pdf_file_save_selection(
+                                self, teacher_id, pdf_file, s_c_ce_type, board_type=None, state_board=None, class_name=None, college_name=None,
+                                stream_name=None, subject_name=None
+                                ) -> Dict:
         """Saves the PDF file in S3 Bucket if it does not already exist."""
-        
+
         bucket_name = constants.BUCKETNAME
         if s_c_ce_type == "school":
             if board_type != 'state_board':
@@ -136,13 +140,13 @@ class llama_model:
                 pdf_file_path = f"{self.pdf_directory_school}{board_type}/{class_name}/{file_name}"
             else:
                 file_name = f"{s_c_ce_type}_{board_type}_{state_board}_{class_name}_{pdf_file.filename}"
-                pdf_file_path = f"{self.pdf_directory_school}{board_type}/{state_board}/{class_name}/{file_name}"                
+                pdf_file_path = f"{self.pdf_directory_school}{board_type}/{state_board}/{class_name}/{file_name}"
         elif s_c_ce_type == "college":
             file_name = f"{s_c_ce_type}_{college_name}_{stream_name}_{subject_name}_{pdf_file.filename}"
             pdf_file_path = f"{self.pdf_directory_college}{college_name}/{stream_name}/{subject_name}/{file_name}"
         else:
             pass
-        
+
         pdf_uuid = uuid.uuid4()
         try:
             self.s3_client.upload_fileobj(pdf_file, bucket_name, pdf_file_path)
@@ -201,7 +205,10 @@ class llama_model:
         except Exception:
             return {'message': 'Failed to Upload the PDF', 'status': 401}
 
-    def _create_embedding_selection(self, pdf_id, pdf_path, s_c_ce_type, board_type=None, state_board=None, class_name=None, college_name=None, stream_name=None, subject_name=None) -> dict:
+    def _create_embedding_selection(
+                                    self, pdf_id, pdf_path, s_c_ce_type, board_type=None, state_board=None, class_name=None, college_name=None,
+                                    stream_name=None, subject_name=None
+                                    ) -> dict:
         bucket_name = constants.BUCKETNAME
 
         response = self.s3_client.list_objects_v2(Bucket=bucket_name, Prefix=pdf_path)
@@ -230,7 +237,7 @@ class llama_model:
                         vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
                         return {'message': 'PDF Uploaded Successfully', 'status': 201}
                     else:
-                        return {'message': 'PDF is already Uploaded', 'status': 203}                    
+                        return {'message': 'PDF is already Uploaded', 'status': 203}
             elif s_c_ce_type == 'college':
                 vector_store = VectorStorePostgresVector(f"{college_name}_{stream_name}_{subject_name}", self.embedding)
                 document_present_or_not = vector_store.check_if_record_exist(pdf_id)
@@ -252,9 +259,8 @@ class llama_model:
         else:
             vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
             return vector_store.get_or_create_collection().as_retriever()
-        
+
     def _vectorstore_retriever_selection(self, data):
-        
         if data['school_college_ce'] == 'school':
             if data['board'] != 'state_board':
                 vector_store = VectorStorePostgresVector(f"{data['board']}_{data['class_name']}", self.embedding)
