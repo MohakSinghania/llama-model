@@ -1,9 +1,12 @@
+import boto3
 import torch
 import ollama
 import secrets
+import constants
 from flask_cors import CORS
 from llama_rag_model import llama_model
-from flask import Flask, request, jsonify, session, send_file
+from flask import Flask, request, jsonify, session, Response
+from botocore.exceptions import NoCredentialsError, ClientError
 
 app = Flask(__name__)
 CORS(app)
@@ -244,20 +247,33 @@ def delete_files():
 
 @app.route('/files/<path:filename>')
 def serve_file(filename):
-    prefix = "/home/ubuntu/llama-model/pdf_files/"
-
-    # Ensure filename has a leading slash
-    if not filename.startswith('/'):
-        filename = '/' + filename
-
-    # Perform the replacement
-    new_filename = filename.replace(prefix, "")
+    bucket_name = constants.BUCKETNAME
+    s3_client = boto3.client(
+                's3',
+                aws_access_key_id=constants.ACCESS_KEY,
+                aws_secret_access_key=constants.SECRET_KEY,
+                region_name=constants.REGION
+            )
+    s3_key = filename
     try:
-        # Ensure filename is the full path
-        filepath = f"/home/ubuntu/llama-model/pdf_files/{new_filename}"
-        return send_file(filepath)
-    except FileNotFoundError:
-        return "File not found", 404
+        # Fetch file from S3
+        file_obj = s3_client.get_object(Bucket=bucket_name, Key=s3_key)
+
+        # Stream the PDF file directly in the browser
+        return Response(
+            file_obj['Body'].read(),
+            content_type='application/pdf',  # Ensure correct MIME type for PDF
+            headers={
+                "Content-Disposition": f"inline; filename={filename.split('/')[-1]}"  # Display PDF inline
+            }
+        )
+    except NoCredentialsError:
+        return "Invalid S3 credentials", 403
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            return "File not found in S3", 404
+        else:
+            return f"Error fetching file from S3: {e}", 500
 
 
 if __name__ == "__main__":
