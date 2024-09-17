@@ -11,7 +11,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_verbose, set_debug
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
-from langchain_text_splitters import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_community.document_loaders import PyMuPDFLoader
 from database import PDFDataDatabase, VectorStorePostgresVector
@@ -77,7 +77,7 @@ class llama_model:
             else:
                 # If it's already in the desired format, just add it
                 docs_list.append(doc)
-        text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=500, chunk_overlap=5)
         doc_split = text_splitter.split_documents(docs_list)
         return doc_split
 
@@ -98,6 +98,20 @@ class llama_model:
             pdf_id=pdf_uuid,
             upload_by=teacher_id,  # Example teacher ID
             pdf_file_name=pdf_file.filename,
+            pdf_path=pdf_file_path,
+        )
+        db.close_connection()
+        return {'pdf_id': pdf_uuid, "pdf_path": pdf_file_path}
+
+    def _pdf_file_process(self, file_name, pdf_file_path, teacher_id=None) -> Dict:
+        """Saves the PDF file in S3 Bucket if it does not already exist."""
+        pdf_uuid = uuid.uuid4()
+
+        db.connect()
+        db.insert_or_update_data_class(
+            pdf_id=pdf_uuid,
+            upload_by=teacher_id,  # Example teacher ID
+            pdf_file_name=file_name,
             pdf_path=pdf_file_path,
         )
         db.close_connection()
@@ -884,7 +898,10 @@ class llama_model:
             vector_store = VectorStorePostgresVector(class_name, self.embedding)
             embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
             if not embeddings_status['is_rec_exist']:
+                db.connect()
                 file_status = db.delete_record(file_id, file_name, class_name)
+                db.close_connection()
+                status = False
                 if file_status['pdf_path'] is not None:
                     status = self._delete_s3_file(file_status['pdf_path'])
                 if status:
@@ -898,7 +915,9 @@ class llama_model:
             vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
             embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
             if not embeddings_status['is_rec_exist']:
+                db.connect()
                 file_status = db.delete_record(file_id, file_name)
+                db.close_connection()
                 status = False
                 if file_status['pdf_path'] is not None:
                     status = self._delete_s3_file(file_status['pdf_path'])

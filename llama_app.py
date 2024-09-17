@@ -4,6 +4,7 @@ import ollama
 import secrets
 import constants
 from flask_cors import CORS
+from database import PDFDataDatabase
 from llama_rag_model import llama_model
 from flask import Flask, request, jsonify, session, Response
 from botocore.exceptions import NoCredentialsError, ClientError
@@ -234,9 +235,9 @@ def delete_files():
         return jsonify({'message': 'Please provide a file to delete', 'status': 400})
 
     # Call the function to delete files
-    delete_message = rag_function._delete_files(file_id, file_name, file_path, class_name)
+    delete_message = rag_function._delete_files(file_id, file_name, class_name)
     try:
-        if delete_message['status'] == 201:
+        if delete_message['status'] == 200:
             return jsonify({'message': 'PDF deleted successfully', 'status': 201})
         else:
             return jsonify({'message': 'There is no such PDF Files to delete', 'status': 401})
@@ -274,6 +275,58 @@ def serve_file(filename):
             return "File not found in S3", 404
         else:
             return f"Error fetching file from S3: {e}", 500
+
+
+@app.route('/update-changes', methods=['GET', 'POST'])
+def update_changes():
+    teacher_id = request.args.get('teacher_id', "None")
+    bucket_name = constants.BUCKETNAME
+    s3_client = boto3.client(
+                's3',
+                aws_access_key_id=constants.ACCESS_KEY,
+                aws_secret_access_key=constants.SECRET_KEY,
+                region_name=constants.REGION
+            )
+    # Initialize the paginator to handle large result sets
+    # Initialize the paginator to handle large result sets
+    prefix = constants.PDF_DIRECTORY_CLASS
+    paginator = s3_client.get_paginator('list_objects_v2')
+
+    # Use the paginator to iterate over all objects in the bucket with the given prefix (empty for root)
+    response_iterator = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+
+    file_dict = {}
+
+    for page in response_iterator:
+        if 'Contents' in page:
+            for obj in page['Contents']:
+                file_key = obj['Key']
+
+                # Extract the file name from the file key
+                file_name = file_key.split('/')[-1] if '/' in file_key else file_key
+
+                # Ignore if file_name is an empty string
+                if not file_name:
+                    continue
+
+                # Extract the collection name (subdirectories between prefix and file_name)
+                collection_parts = file_key[len(prefix):].split('/')[:-1]  # Remove the file name
+                collection_name = "_".join(part for part in collection_parts if part)  # Join by underscore
+
+                # Store the file name as key and file path and collection name as sub-keys
+                file_dict[file_name] = {
+                    'file_path': file_key,  # Full path of the file
+                    'collection_name': collection_name  # Concatenated subdirectory names
+                }
+
+    db = PDFDataDatabase()
+    db.delete_all()
+    for file, value in file_dict.items():
+        if file.endswith(".pdf"):
+            pdf_details = rag_function._pdf_file_process(file, value["file_path"], teacher_id)
+            message = rag_function._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'], value["collection_name"])
+
+    return jsonify(message)
 
 
 if __name__ == "__main__":

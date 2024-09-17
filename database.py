@@ -303,6 +303,18 @@ class PDFDataDatabase:
             self.connection.close()
             print("Database connection closed.")
 
+    def delete_all(self):
+        is_rec_exist = True
+        try:
+            with psycopg2.connect(host=constants.DBHOST, database=constants.DBNAME, user=constants.DBUSER, password=constants.DBPW) as db:
+                cursor = db.cursor()
+                cursor.execute("DELETE FROM pdf_data")
+                cursor.execute("DELETE FROM langchain_pg_collection")
+                is_rec_exist = False
+        except Exception:
+            pass
+        return {'is_rec_exist': is_rec_exist}
+
 
 class VectorStorePostgresVector:
     def __init__(self, collection_name, embeddings):
