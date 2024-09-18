@@ -33,11 +33,18 @@ if selected_s_c_ce_type == "school":
                     'class_11', 'class_12'
                     ]
     selected_class = st.selectbox('Select Class', class_options)
+    if selected_class == 'class_11' or selected_class == 'class_12':
+        stream_type = ['Commerce', 'Science', 'Arts', 'Medical']
+        selected_stream = st.selectbox('Select Stream Type', stream_type)
+    else:
+        selected_stream = None
 elif selected_s_c_ce_type == "college":
     college_name_type = ['Govt Holkar Science College', 'DAVV', 'RGPV']
     selected_college_name_type = st.selectbox('Select College/University Name', college_name_type)
-    stream_type = ['B.Sc', 'M.Sc', 'B.E']
-    selected_stream_type = st.selectbox('Select Stream', stream_type)
+    stream_type = ['Commerce', 'Science', 'Arts', 'Medical']
+    selected_stream = st.selectbox('Select Stream Type', stream_type)
+    course_type = ['B.Sc', 'M.Sc', 'B.E']
+    selected_course_type = st.selectbox('Select Course', course_type)
     subject_type = ['Computer Science', 'Mathematics', 'Statistics']
     selected_subject_type = st.selectbox('Select Subject', subject_type)
 else:
@@ -52,23 +59,25 @@ if st.button("Upload"):
         for file in uploaded_files:
             pdf_details = streamlit_rag_model._pdf_file_save_selection(
                                                                         file, selected_s_c_ce_type, board_type=selected_board_type,
-                                                                        state_board=selected_state_board, class_name=selected_class
+                                                                        state_board=selected_state_board, class_name=selected_class,
+                                                                        stream_type=selected_stream
                                                                       )
             message = streamlit_rag_model._create_embedding_selection(
                                                                         pdf_details['pdf_id'], pdf_details['pdf_path'], selected_s_c_ce_type,
                                                                         board_type=selected_board_type, state_board=selected_state_board,
-                                                                        class_name=selected_class
+                                                                        class_name=selected_class, stream_type=selected_stream
                                                                     )
     elif selected_s_c_ce_type == 'college':
         for file in uploaded_files:
             pdf_details = streamlit_rag_model._pdf_file_save_selection(
                                                                         file, selected_s_c_ce_type, college_name=selected_college_name_type,
-                                                                        stream_name=selected_stream_type, subject_name=selected_subject_type
+                                                                        course_name=selected_course_type, subject_name=selected_subject_type,
+                                                                        stream_type=selected_stream
                                                                     )
             message = streamlit_rag_model._create_embedding_selection(
                                                                         pdf_details['pdf_id'], pdf_details['pdf_path'], selected_s_c_ce_type,
-                                                                        college_name=selected_college_name_type, stream_name=selected_stream_type,
-                                                                        subject_name=selected_subject_type
+                                                                        college_name=selected_college_name_type, stream_name=selected_course_type,
+                                                                        subject_name=selected_subject_type, stream_type=selected_stream
                                                                     )
     else:
         pass

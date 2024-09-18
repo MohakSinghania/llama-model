@@ -136,6 +136,7 @@ def upload_pdf_hierarchy():
     school_college_competitiveexam = request.form['s_c_ce_type']
     board_type = request.form.get('board_type', None)
     state_board = request.form.get('state_board_type', None)
+    stream_name = request.form.get('stream_name', None)
     class_name = request.form.get('class_name', None)
     college_name_type = request.form.get('college_name_type', None)
     course_type = request.form.get('course_type', None)
@@ -150,20 +151,22 @@ def upload_pdf_hierarchy():
             if school_college_competitiveexam == "school":
                 pdf_details = rag_function._pdf_file_save_selection(
                                                                     teacher_id, file, school_college_competitiveexam, board_type=board_type,
-                                                                    state_board=state_board, class_name=class_name
+                                                                    state_board=state_board, class_name=class_name, stream_type=stream_name
                                                                 )
                 message = rag_function._create_embedding_selection(
                                                                     pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam,
-                                                                    board_type=board_type, state_board=state_board, class_name=class_name
+                                                                    board_type=board_type, state_board=state_board, class_name=class_name,
+                                                                    stream_type=stream_name
                                                                 )
             elif school_college_competitiveexam == "college":
                 pdf_details = rag_function._pdf_file_save_selection(
                                                                     teacher_id, file, school_college_competitiveexam, college_name=college_name_type,
-                                                                    stream_name=course_type, subject_name=subject_type
+                                                                    course_name=course_type, subject_name=subject_type, stream_type=stream_name
                                                                 )
                 message = rag_function._create_embedding_selection(
                                                                     pdf_details['pdf_id'], pdf_details['pdf_path'], school_college_competitiveexam,
-                                                                    college_name=college_name_type, stream_name=course_type, subject_name=subject_type
+                                                                    college_name=college_name_type, course_name=course_type,
+                                                                    subject_name=subject_type, stream_type=stream_name
                                                                 )
             else:
                 pass
@@ -185,6 +188,7 @@ def rag_model_hierarchy():
     board_type = request.args.get('board_type') or None
     state_board = request.args.get('state_board_type') or None
     class_name = request.args.get('class_name') or None
+    stream_name = request.args.get('stream_name') or None
     college_name_type = request.args.get('college_name_type') or None
     course_type = request.args.get('course_type') or None
     subject_type = request.args.get('subject_type') or None
@@ -197,6 +201,7 @@ def rag_model_hierarchy():
         "board": board_type,
         "state_board": state_board,
         "class_name": class_name,
+        "stream": stream_name,
         "college_name": college_name_type,
         "stream_name": course_type,
         "subject": subject_type

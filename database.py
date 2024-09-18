@@ -78,8 +78,9 @@ class PDFDataDatabase:
                     board_type TEXT,
                     state_board TEXT,
                     class_name TEXT,
-                    college_name TEXT,
                     stream_name TEXT,
+                    college_name TEXT,
+                    course_name TEXT,
                     subject_name TEXT,
                     competitve_exam_name TEXT
                 );
@@ -108,8 +109,8 @@ class PDFDataDatabase:
 
         upsert_query = '''
             INSERT INTO pdf_data_selection_type (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, school_college_ce, board_type,
-                                                state_board, class_name, college_name, stream_name, subject_name, competitve_exam_name)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                state_board, class_name, stream_name, college_name, course_name, subject_name, competitve_exam_name)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (pdf_file_name)
             DO UPDATE SET
                 pdf_id = EXCLUDED.pdf_id,
@@ -120,8 +121,9 @@ class PDFDataDatabase:
                 board_type = EXCLUDED.board_type,
                 state_board = EXCLUDED.state_board,
                 class_name = EXCLUDED.class_name,
-                college_name = EXCLUDED.college_name,
                 stream_name = EXCLUDED.stream_name,
+                college_name = EXCLUDED.college_name,
+                course_name = EXCLUDED.stream_name,
                 subject_name = EXCLUDED.subject_name,
                 competitve_exam_name = EXCLUDED.competitve_exam_name;
         '''
@@ -131,7 +133,7 @@ class PDFDataDatabase:
                 cursor.execute(upsert_query, (
                     data['pdf_id'], data['upload_by'], data['pdf_file_name'], data['pdf_path'], upload_date_time,
                     data['school_college_ce'], data['board_type'], data['state_board'], data['class_name'],
-                    data['college_name'], data['stream_name'], data['subject_name'], data['competitve_exam_name']
+                    data['stream_name'], data['college_name'], data['course_name'], data['subject_name'], data['competitve_exam_name']
                 ))
                 self.connection.commit()
                 print("Data inserted or updated successfully.")

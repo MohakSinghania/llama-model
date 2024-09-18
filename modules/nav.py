@@ -1,27 +1,36 @@
-from dependency import *
+import streamlit as st
+from streamlit import session_state as ss
 
 
 def HomeNav():
     st.sidebar.page_link("streamlit_app.py", label="Home", icon='🏠')
 
+
 def LoginNav():
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/account.py", label="Account", icon='🔐')
+
 
 def UploadPDFNav():
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/upload_pdf_page.py", label="Upload PDF's", icon='✈️')
 
+
 def RAGModelNav():
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/rag_model_stream.py", label="RAG Model", icon='✈️')
 
+
 def UploadPDFClassNav():
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/upload_pdf_page_class.py", label="Upload PDF's Based On Class", icon='✈️')
+
 
 def RAGModelClassNav(data):
     ss.class_name = data['class_name']
     st.sidebar.page_link("/home/ubuntu/llama-model/pages/rag_model_stream_class.py", label="RAG Model Based On Class", icon='📚')
 
+
 def UploadPDFHierarchicalNav():
-    st.sidebar.page_link("/home/ubuntu/llama-model/pages/upload_pdf_page_hierarchical.py", label="Upload PDF's Based On Hierarchical Architecture", icon='✈️')
+    st.sidebar.page_link("/home/ubuntu/llama-model/pages/upload_pdf_page_hierarchical.py",
+                         label="Upload PDF's Based On Hierarchical Architecture", icon='✈️')
+
 
 def RAGModelHierarchicalNav(data):
     ss.school_college_ce = data['school_college_ce']
@@ -31,13 +40,14 @@ def RAGModelHierarchicalNav(data):
     ss.college_name = data['college_name']
     ss.stream_name = data['stream_name']
     ss.subject = data['subject']
-    st.sidebar.page_link("/home/ubuntu/llama-model/pages/rag_model_stream_hierarchical.py", label="RAG Model Based On Hierarchical Architecture", icon='📚')
+    st.sidebar.page_link("/home/ubuntu/llama-model/pages/rag_model_stream_hierarchical.py",
+                         label="RAG Model Based On Hierarchical Architecture", icon='📚')
 
 
 def MenuButtons(data, user_roles=None):
     if user_roles is None:
         user_roles = {}
-    
+
     if 'authentication_status' not in ss:
         ss.authentication_status = False
 
