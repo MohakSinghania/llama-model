@@ -1,19 +1,22 @@
 import re
 import uuid
+import fitz
 import boto3
 import tempfile
 import constants
+import pytesseract
 from io import BytesIO
 from pprint import pprint
+from pdf2image import convert_from_path
 from typing import Dict, TypedDict, Any
 from langgraph.graph import END, StateGraph
+from langchain.docstore.document import Document
 from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_verbose, set_debug
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_community.document_loaders import PyMuPDFLoader
 from database import PDFDataDatabase, VectorStorePostgresVector
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 
@@ -44,7 +47,11 @@ class llama_model:
         self.pdf_directory_all = constants.PDF_DIRECTORY_ALL
         self.pdf_directory_school = constants.PDF_DIRECTORY_SCHOOL
         self.pdf_directory_college = constants.PDF_DIRECTORY_COLLEGE
-        self.embedding = HuggingFaceEmbeddings(model_name=constants.HUGGINGFACE_MODEL)
+        self.languages = constants.LANGUAGES
+        self.embedding = HuggingFaceEmbeddings(
+                            model_name=constants.HUGGINGFACE_MODEL,
+                            model_kwargs={'trust_remote_code': True, 'truncate_dim': constants.DIMENSION}
+                        )
         self.s3_client = boto3.client(
                             's3',
                             aws_access_key_id=constants.ACCESS_KEY,
@@ -60,26 +67,68 @@ class llama_model:
         except Exception:
             return False
 
+    # Function to perform OCR on images
+    def _extract_text_from_images(self, pdf_path):  # Add more as needed
+        images = convert_from_path(pdf_path)
+        text_content = []
+        for image in images:
+            # Perform OCR with specified languages
+            text = pytesseract.image_to_string(image, lang=self.languages)
+            text_content.append(text)
+        return text_content
+
     def _get_docs_split(self, pdf_files) -> Any:
         docs_list = []
-        # for file in pdf_files:
         with tempfile.NamedTemporaryFile(delete=True) as temp_file:
             temp_file.write(pdf_files.getvalue())
             temp_file_path = temp_file.name
-            loaded_docs = PyMuPDFLoader(temp_file_path).load()
+            # Open the PDF document directly with PyMuPDF (fitz)
+            doc = fitz.open(temp_file_path)
 
-        # Ensure that loaded_docs is processed correctly
-        for doc in loaded_docs:
-            if isinstance(doc, tuple):
-                # Assuming the tuple structure is like (page_number, page_content)
-                page_number, page_content = doc
-                docs_list.append({'page_content': page_content})
-            else:
-                # If it's already in the desired format, just add it
-                docs_list.append(doc)
-        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=500, chunk_overlap=5)
-        doc_split = text_splitter.split_documents(docs_list)
-        return doc_split
+            # Loop through the pages of the PDF
+            for page_number in range(doc.page_count):
+                page = doc.load_page(page_number)
+                images = page.get_images(full=True)  # Detect if the page contains images
+
+                # Extract metadata for each page
+                metadata = {
+                    'source': temp_file_path,
+                    'file_path': temp_file_path,
+                    'page': page_number,
+                    'total_pages': doc.page_count,
+                    'format': doc.metadata.get('format', 'PDF'),
+                    'title': doc.metadata.get('title', ''),
+                    'author': doc.metadata.get('author', ''),
+                    'creationDate': doc.metadata.get('creationDate', ''),
+                    'modDate': doc.metadata.get('modDate', '')
+                }
+
+                # Check for images and perform OCR
+                if images:
+                    # If there are images, perform OCR to extract text
+                    ocr_text = self._extract_text_from_images(temp_file_path)
+                    for text in ocr_text:
+                        # Create a Document object for each extracted OCR text
+                        doc_object = Document(
+                            page_content=text,
+                            metadata=metadata
+                        )
+                        docs_list.append(doc_object)
+                else:
+                    # If no images, extract text from the page
+                    page_text = page.get_text("text")
+                    # Create a Document object for the extracted text
+                    doc_object = Document(
+                        page_content=page_text,
+                        metadata=metadata
+                    )
+                    docs_list.append(doc_object)
+
+            # Split the documents into smaller chunks using the text splitter
+            text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=2000, chunk_overlap=290)
+            doc_split = text_splitter.split_documents(docs_list)
+
+            return doc_split
 
     def _pdf_file_save(self, teacher_id, pdf_file) -> Dict:
         """Saves the PDF file in S3 Bucket if it does not already exist."""
