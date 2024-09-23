@@ -1,19 +1,22 @@
 import re
 import uuid
+import fitz
 import boto3
 import tempfile
 import constants
+import pytesseract
 from io import BytesIO
 from pprint import pprint
+from pdf2image import convert_from_path
 from typing import Dict, TypedDict, Any
 from langgraph.graph import END, StateGraph
+from langchain.docstore.document import Document
 from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_verbose, set_debug
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
 from langchain_text_splitters import CharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_community.document_loaders import PyMuPDFLoader
 from database import PDFDataDatabase, VectorStorePostgresVector
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
 
@@ -24,6 +27,7 @@ set_verbose(True)
 
 local_llm = constants.LOCAL_LLM
 db = PDFDataDatabase()
+pytesseract.pytesseract.tesseract_cmd = constants.PYTESSERRACT_PATH
 
 
 class GraphState(TypedDict):
@@ -44,7 +48,10 @@ class llama_model:
         self.pdf_directory_all = constants.PDF_DIRECTORY_ALL
         self.pdf_directory_school = constants.PDF_DIRECTORY_SCHOOL
         self.pdf_directory_college = constants.PDF_DIRECTORY_COLLEGE
-        self.embedding = HuggingFaceEmbeddings(model_name=constants.HUGGINGFACE_MODEL)
+        self.embedding = HuggingFaceEmbeddings(
+                            model_name=constants.HUGGINGFACE_MODEL,
+                            model_kwargs={'trust_remote_code': True, 'truncate_dim': constants.DIMENSION}
+                        )
         self.s3_client = boto3.client(
                             's3',
                             aws_access_key_id=constants.ACCESS_KEY,
@@ -60,26 +67,70 @@ class llama_model:
         except Exception:
             return False
 
-    def _get_docs_split(self, pdf_files) -> Any:
+    # Function to perform OCR on images
+    def extract_text_from_images(self, pdf_path, languages="eng+hin+deu+spa+fra"):  # Add more as needed
+        images = convert_from_path(pdf_path)
+        text_content = []
+        for image in images:
+            # Perform OCR with specified languages
+            text = pytesseract.image_to_string(image, lang=languages)
+            text_content.append(text)
+        return text_content
+
+    def _get_docs_split(self, pdf_files, languages="eng+hin+deu+spa+fra") -> Any:
         docs_list = []
-        # for file in pdf_files:
+        
         with tempfile.NamedTemporaryFile(delete=True) as temp_file:
             temp_file.write(pdf_files.getvalue())
             temp_file_path = temp_file.name
-            loaded_docs = PyMuPDFLoader(temp_file_path).load()
+            
+            # Open the PDF document directly with PyMuPDF (fitz)
+            doc = fitz.open(temp_file_path)
 
-        # Ensure that loaded_docs is processed correctly
-        for doc in loaded_docs:
-            if isinstance(doc, tuple):
-                # Assuming the tuple structure is like (page_number, page_content)
-                page_number, page_content = doc
-                docs_list.append({'page_content': page_content})
-            else:
-                # If it's already in the desired format, just add it
-                docs_list.append(doc)
-        text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=250, chunk_overlap=0)
-        doc_split = text_splitter.split_documents(docs_list)
-        return doc_split
+            # Loop through the pages of the PDF
+            for page_number in range(doc.page_count):
+                page = doc.load_page(page_number)
+                images = page.get_images(full=True)  # Detect if the page contains images
+
+                # Extract metadata for each page
+                metadata = {
+                    'source': temp_file_path,
+                    'file_path': temp_file_path,
+                    'page': page_number,
+                    'total_pages': doc.page_count,
+                    'format': doc.metadata.get('format', 'PDF'),
+                    'title': doc.metadata.get('title', ''),
+                    'author': doc.metadata.get('author', ''),
+                    'creationDate': doc.metadata.get('creationDate', ''),
+                    'modDate': doc.metadata.get('modDate', '')
+                }
+
+                # Check for images and perform OCR
+                if images:
+                    # If there are images, perform OCR to extract text
+                    ocr_text = self.extract_text_from_images(temp_file_path, languages=languages)
+                    for text in ocr_text:
+                        # Create a Document object for each extracted OCR text
+                        doc_object = Document(
+                            page_content=text,
+                            metadata=metadata
+                        )
+                        docs_list.append(doc_object)
+                else:
+                    # If no images, extract text from the page
+                    page_text = page.get_text("text")
+                    # Create a Document object for the extracted text
+                    doc_object = Document(
+                        page_content=page_text,
+                        metadata=metadata
+                    )
+                    docs_list.append(doc_object)
+
+            # Split the documents into smaller chunks using the text splitter
+            text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=2000, chunk_overlap=290)
+            doc_split = text_splitter.split_documents(docs_list)
+
+            return doc_split
 
     def _pdf_file_save(self, teacher_id, pdf_file) -> Dict:
         """Saves the PDF file in S3 Bucket if it does not already exist."""
@@ -209,8 +260,7 @@ class llama_model:
                                     self, pdf_id, pdf_path, s_c_ce_type, board_type=None, state_board=None, class_name=None, college_name=None,
                                     stream_name=None, subject_name=None
                                     ) -> dict:
-        bucket_name = constants.BUCKETNAME
-
+        bucket_name = constants.BUCKETNAME        
         response = self.s3_client.list_objects_v2(Bucket=bucket_name, Prefix=pdf_path)
         if 'Contents' in response:
             if response['Contents'][0]['Key'].endswith('.pdf'):
@@ -316,11 +366,11 @@ class llama_model:
                 state_dict = state["keys"]
                 question = state_dict["question"]
                 documents = state_dict["documents"]
-
                 # Prompt
                 prompt = PromptTemplate(
                         template="""You are an assistant for question-answering tasks. \n
                         Treat as a Question , regardless of punctuation. \n
+                        Keep the Question in the as it is language, don't change the language. \n
                         Use the following pieces of retrieved context to answer the question. \n
                         If the Question does not belongs to the Context, just say "FALLBACK",
                         don't give information based on your own Knowledge base,
@@ -406,43 +456,7 @@ class llama_model:
                         "question": question,
                     }
                 }
-
-            def transform_query(state):
-                """
-                Transform the query to produce a better question.
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    state (dict): Updates question key with a re-phrased question
-                """
-
-                print("---TRANSFORM QUERY---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                # documents = state_dict["documents"]
-
-                # Create a prompt template with format instructions and the query
-                prompt = PromptTemplate(
-                    template="""Treat as a Question , regardless of punctuation. \n
-                    Here is the initial question:
-                    \n ------- \n
-                    {question}
-                    \n ------- \n
-                    Provide an improved question without any premable, only respond with the
-                    updated question: """,
-                    input_variables=["question"],
-                )
-                # Prompt
-                chain = prompt | llm_without_format | StrOutputParser()
-
-                better_question = chain.invoke({"question": question})
-
-                return {
-                    "keys": {"question": better_question}
-                }
-
+            
             def decide_to_generate(state):
                 """
                 Determines whether to generate an answer or re-generate a question for web search.
@@ -525,10 +539,10 @@ class llama_model:
             workflow.add_node("retrieve", retrieve)  # retrieve
             workflow.add_node("grade_documents", grade_documents)  # grade documents
             workflow.add_node("generate", generate)  # generatae
-            workflow.add_node("transform_query", transform_query)  # transform_query
+            # workflow.add_node("transform_query", transform_query)  # transform_query
 
-            workflow.set_entry_point("transform_query")
-            workflow.add_edge("transform_query", "retrieve")
+            workflow.set_entry_point("retrieve")
+            # workflow.add_edge("transform_query", "retrieve")
             workflow.add_edge("retrieve", "grade_documents")
             workflow.add_conditional_edges(
                 "grade_documents",
@@ -607,11 +621,11 @@ class llama_model:
                 state_dict = state["keys"]
                 question = state_dict["question"]
                 documents = state_dict["documents"]
-
                 # Prompt
                 prompt = PromptTemplate(
                         template="""You are an assistant for question-answering tasks. \n
                         Treat as a Question , regardless of punctuation. \n
+                        Keep the Question in the as it is language, don't change the language. \n
                         Use the following pieces of retrieved context to answer the question. \n
                         If the Question does not belongs to the Context, just say "FALLBACK",
                         don't give information based on your own Knowledge base,
@@ -698,42 +712,6 @@ class llama_model:
                     }
                 }
 
-            def transform_query(state):
-                """
-                Transform the query to produce a better question.
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    state (dict): Updates question key with a re-phrased question
-                """
-
-                print("---TRANSFORM QUERY---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                # documents = state_dict["documents"]
-
-                # Create a prompt template with format instructions and the query
-                prompt = PromptTemplate(
-                    template="""Treat as a Question , regardless of punctuation. \n
-                    Here is the initial question:
-                    \n ------- \n
-                    {question}
-                    \n ------- \n
-                    Provide an improved question without any premable, only respond with the
-                    updated question: """,
-                    input_variables=["question"],
-                )
-                # Prompt
-                chain = prompt | llm_without_format | StrOutputParser()
-
-                better_question = chain.invoke({"question": question})
-
-                return {
-                    "keys": {"question": better_question}
-                }
-
             def decide_to_generate(state):
                 """
                 Determines whether to generate an answer or re-generate a question for web search.
@@ -816,10 +794,10 @@ class llama_model:
             workflow.add_node("retrieve", retrieve)  # retrieve
             workflow.add_node("grade_documents", grade_documents)  # grade documents
             workflow.add_node("generate", generate)  # generatae
-            workflow.add_node("transform_query", transform_query)  # transform_query
+            # workflow.add_node("transform_query", transform_query)  # transform_query
 
-            workflow.set_entry_point("transform_query")
-            workflow.add_edge("transform_query", "retrieve")
+            workflow.set_entry_point("retrieve")
+            # workflow.add_edge("transform_query", "retrieve")
             workflow.add_edge("retrieve", "grade_documents")
             workflow.add_conditional_edges(
                 "grade_documents",

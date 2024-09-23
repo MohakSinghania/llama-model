@@ -311,6 +311,7 @@ class VectorStorePostgresVector:
         self.embeddings = embeddings
 
     def get_or_create_collection(self):
+        import pdb;pdb.set_trace()
         return PGVector(
             collection_name=self.collection_name,
             connection_string=self.connection,

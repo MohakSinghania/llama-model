@@ -28,7 +28,7 @@ def ollama_chat():
     if not user_query:
         return jsonify({'message': 'Missing query or student ID', 'status': 400})
     response = ollama.chat(
-        model="llama3",
+        model="llama3.1:8b",
         messages=[
             {
                 "role": "user",
