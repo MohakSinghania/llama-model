@@ -591,10 +591,8 @@ class llama_model:
             workflow.add_node("retrieve", retrieve)  # retrieve
             workflow.add_node("grade_documents", grade_documents)  # grade documents
             workflow.add_node("generate", generate)  # generatae
-            # workflow.add_node("transform_query", transform_query)  # transform_query
 
             workflow.set_entry_point("retrieve")
-            # workflow.add_edge("transform_query", "retrieve")
             workflow.add_edge("retrieve", "grade_documents")
             workflow.add_conditional_edges(
                 "grade_documents",
@@ -846,10 +844,8 @@ class llama_model:
             workflow.add_node("retrieve", retrieve)  # retrieve
             workflow.add_node("grade_documents", grade_documents)  # grade documents
             workflow.add_node("generate", generate)  # generatae
-            # workflow.add_node("transform_query", transform_query)  # transform_query
 
             workflow.set_entry_point("retrieve")
-            # workflow.add_edge("transform_query", "retrieve")
             workflow.add_edge("retrieve", "grade_documents")
             workflow.add_conditional_edges(
                 "grade_documents",
