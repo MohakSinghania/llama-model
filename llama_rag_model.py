@@ -15,7 +15,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_verbose, set_debug
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
-from langchain_text_splitters import CharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
 from database import PDFDataDatabase, VectorStorePostgresVector
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
@@ -83,7 +83,6 @@ class llama_model:
         with tempfile.NamedTemporaryFile(delete=True) as temp_file:
             temp_file.write(pdf_files.getvalue())
             temp_file_path = temp_file.name
-            
             # Open the PDF document directly with PyMuPDF (fitz)
             doc = fitz.open(temp_file_path)
 
@@ -127,7 +126,7 @@ class llama_model:
                     docs_list.append(doc_object)
 
             # Split the documents into smaller chunks using the text splitter
-            text_splitter = CharacterTextSplitter.from_tiktoken_encoder(chunk_size=2000, chunk_overlap=290)
+            text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=2000, chunk_overlap=290)
             doc_split = text_splitter.split_documents(docs_list)
 
             return doc_split
@@ -149,6 +148,20 @@ class llama_model:
             pdf_id=pdf_uuid,
             upload_by=teacher_id,  # Example teacher ID
             pdf_file_name=pdf_file.filename,
+            pdf_path=pdf_file_path,
+        )
+        db.close_connection()
+        return {'pdf_id': pdf_uuid, "pdf_path": pdf_file_path}
+
+    def _pdf_file_process(self, file_name, pdf_file_path, teacher_id=None) -> Dict:
+        """Saves the PDF file in S3 Bucket if it does not already exist."""
+        pdf_uuid = uuid.uuid4()
+
+        db.connect()
+        db.insert_or_update_data_class(
+            pdf_id=pdf_uuid,
+            upload_by=teacher_id,  # Example teacher ID
+            pdf_file_name=file_name,
             pdf_path=pdf_file_path,
         )
         db.close_connection()
@@ -180,21 +193,29 @@ class llama_model:
 
     def _pdf_file_save_selection(
                                 self, teacher_id, pdf_file, s_c_ce_type, board_type=None, state_board=None, class_name=None, college_name=None,
-                                stream_name=None, subject_name=None
+                                course_name=None, subject_name=None, stream_type=None
                                 ) -> Dict:
         """Saves the PDF file in S3 Bucket if it does not already exist."""
-
         bucket_name = constants.BUCKETNAME
         if s_c_ce_type == "school":
             if board_type != 'state_board':
-                file_name = f"{s_c_ce_type}_{board_type}_{class_name}_{pdf_file.filename}"
-                pdf_file_path = f"{self.pdf_directory_school}{board_type}/{class_name}/{file_name}"
+                if stream_type is None:
+                    file_name = f"{s_c_ce_type}_{board_type}_{class_name}_{pdf_file.filename}"
+                    pdf_file_path = f"{self.pdf_directory_school}{board_type}/{class_name}/{file_name}"
+                else:
+                    file_name = f"{s_c_ce_type}_{board_type}_{stream_type}_{class_name}_{pdf_file.filename}"
+                    pdf_file_path = f"{self.pdf_directory_school}{board_type}/{stream_type}/{class_name}/{file_name}"
             else:
-                file_name = f"{s_c_ce_type}_{board_type}_{state_board}_{class_name}_{pdf_file.filename}"
-                pdf_file_path = f"{self.pdf_directory_school}{board_type}/{state_board}/{class_name}/{file_name}"
+                if stream_type is None:
+                    file_name = f"{s_c_ce_type}_{board_type}_{state_board}_{class_name}_{pdf_file.filename}"
+                    pdf_file_path = f"{self.pdf_directory_school}{board_type}/{state_board}/{class_name}/{file_name}"
+                else:
+                    file_name = f"{s_c_ce_type}_{board_type}_{state_board}_{stream_type}_{class_name}_{pdf_file.filename}"
+                    pdf_file_path = f"{self.pdf_directory_school}{board_type}/{state_board}/{stream_type}/{class_name}/{file_name}"
+
         elif s_c_ce_type == "college":
-            file_name = f"{s_c_ce_type}_{college_name}_{stream_name}_{subject_name}_{pdf_file.filename}"
-            pdf_file_path = f"{self.pdf_directory_college}{college_name}/{stream_name}/{subject_name}/{file_name}"
+            file_name = f"{s_c_ce_type}_{college_name}_{course_name}_{stream_type}_{subject_name}_{pdf_file.filename}"
+            pdf_file_path = f"{self.pdf_directory_college}{college_name}/{course_name}/{stream_type}/{subject_name}/{file_name}"
         else:
             pass
 
@@ -213,8 +234,9 @@ class llama_model:
             "board_type": board_type,
             "state_board": state_board,
             "class_name": class_name,
+            "stream_name": stream_type,
             "college_name": college_name,
-            "stream_name": stream_name,
+            "course_name": course_name,
             "subject_name": subject_name,
             "competitve_exam_name": None
         }
@@ -258,7 +280,7 @@ class llama_model:
 
     def _create_embedding_selection(
                                     self, pdf_id, pdf_path, s_c_ce_type, board_type=None, state_board=None, class_name=None, college_name=None,
-                                    stream_name=None, subject_name=None
+                                    course_name=None, subject_name=None, stream_type=None
                                     ) -> dict:
         bucket_name = constants.BUCKETNAME        
         response = self.s3_client.list_objects_v2(Bucket=bucket_name, Prefix=pdf_path)
@@ -271,25 +293,45 @@ class llama_model:
         try:
             if s_c_ce_type == 'school':
                 if board_type != 'state_board':
-                    vector_store = VectorStorePostgresVector(f"{board_type}_{class_name}", self.embedding)
-                    document_present_or_not = vector_store.check_if_record_exist(pdf_id)
-                    if not document_present_or_not['is_rec_exist']:
-                        pdf_id = str(pdf_id)
-                        vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
-                        return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                    if stream_type is None:
+                        vector_store = VectorStorePostgresVector(f"{board_type}_{class_name}", self.embedding)
+                        document_present_or_not = vector_store.check_if_record_exist(pdf_id)
+                        if not document_present_or_not['is_rec_exist']:
+                            pdf_id = str(pdf_id)
+                            vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                            return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                        else:
+                            return {'message': 'PDF is already Uploaded', 'status': 203}
                     else:
-                        return {'message': 'PDF is already Uploaded', 'status': 203}
+                        vector_store = VectorStorePostgresVector(f"{board_type}_{stream_type}_{class_name}", self.embedding)
+                        document_present_or_not = vector_store.check_if_record_exist(pdf_id)
+                        if not document_present_or_not['is_rec_exist']:
+                            pdf_id = str(pdf_id)
+                            vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                            return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                        else:
+                            return {'message': 'PDF is already Uploaded', 'status': 203}
                 else:
-                    vector_store = VectorStorePostgresVector(f"{board_type}_{state_board}_{class_name}", self.embedding)
-                    document_present_or_not = vector_store.check_if_record_exist(pdf_id)
-                    if not document_present_or_not['is_rec_exist']:
-                        pdf_id = str(pdf_id)
-                        vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
-                        return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                    if stream_type is None:
+                        vector_store = VectorStorePostgresVector(f"{board_type}_{state_board}_{class_name}", self.embedding)
+                        document_present_or_not = vector_store.check_if_record_exist(pdf_id)
+                        if not document_present_or_not['is_rec_exist']:
+                            pdf_id = str(pdf_id)
+                            vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                            return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                        else:
+                            return {'message': 'PDF is already Uploaded', 'status': 203}
                     else:
-                        return {'message': 'PDF is already Uploaded', 'status': 203}
+                        vector_store = VectorStorePostgresVector(f"{board_type}_{state_board}_{stream_type}_{class_name}", self.embedding)
+                        document_present_or_not = vector_store.check_if_record_exist(pdf_id)
+                        if not document_present_or_not['is_rec_exist']:
+                            pdf_id = str(pdf_id)
+                            vector_store.store_docs_to_collection(pdf_id, doc_split, pdf_path)
+                            return {'message': 'PDF Uploaded Successfully', 'status': 201}
+                        else:
+                            return {'message': 'PDF is already Uploaded', 'status': 203}
             elif s_c_ce_type == 'college':
-                vector_store = VectorStorePostgresVector(f"{college_name}_{stream_name}_{subject_name}", self.embedding)
+                vector_store = VectorStorePostgresVector(f"{college_name}_{course_name}_{stream_type}_{subject_name}", self.embedding)
                 document_present_or_not = vector_store.check_if_record_exist(pdf_id)
                 if not document_present_or_not['is_rec_exist']:
                     pdf_id = str(pdf_id)
@@ -313,13 +355,23 @@ class llama_model:
     def _vectorstore_retriever_selection(self, data):
         if data['school_college_ce'] == 'school':
             if data['board'] != 'state_board':
-                vector_store = VectorStorePostgresVector(f"{data['board']}_{data['class_name']}", self.embedding)
-                return vector_store.get_or_create_collection().as_retriever()
+                if data['stream'] is None:
+                    vector_store = VectorStorePostgresVector(f"{data['board']}_{data['class_name']}", self.embedding)
+                    return vector_store.get_or_create_collection().as_retriever()
+                else:
+                    vector_store = VectorStorePostgresVector(f"{data['board']}_{data['stream']}_{data['class_name']}", self.embedding)
+                    return vector_store.get_or_create_collection().as_retriever()
             else:
-                vector_store = VectorStorePostgresVector(f"{data['board']}_{data['state_board']}_{data['class_name']}", self.embedding)
-                return vector_store.get_or_create_collection().as_retriever()
+                if data['stream'] is None:
+                    vector_store = VectorStorePostgresVector(f"{data['board']}_{data['state_board']}_{data['class_name']}", self.embedding)
+                    return vector_store.get_or_create_collection().as_retriever()
+                else:
+                    vector_store = VectorStorePostgresVector(f"{data['board']}_{data['state_board']}_{data['stream']}_{data['class_name']}",
+                                                             self.embedding)
+                    return vector_store.get_or_create_collection().as_retriever()
         elif data['school_college_ce'] == 'college':
-            vector_store = VectorStorePostgresVector(f"{data['college_name']}_{data['stream_name']}_{data['subject']}", self.embedding)
+            vector_store = VectorStorePostgresVector(f"{data['college_name']}_{data['course_name']}_{data['stream']}_{data['subject']}",
+                                                     self.embedding)
             return vector_store.get_or_create_collection().as_retriever()
 
         else:
@@ -862,7 +914,10 @@ class llama_model:
             vector_store = VectorStorePostgresVector(class_name, self.embedding)
             embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
             if not embeddings_status['is_rec_exist']:
+                db.connect()
                 file_status = db.delete_record(file_id, file_name, class_name)
+                db.close_connection()
+                status = False
                 if file_status['pdf_path'] is not None:
                     status = self._delete_s3_file(file_status['pdf_path'])
                 if status:
@@ -876,7 +931,9 @@ class llama_model:
             vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
             embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
             if not embeddings_status['is_rec_exist']:
+                db.connect()
                 file_status = db.delete_record(file_id, file_name)
+                db.close_connection()
                 status = False
                 if file_status['pdf_path'] is not None:
                     status = self._delete_s3_file(file_status['pdf_path'])

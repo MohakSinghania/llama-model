@@ -32,8 +32,9 @@ def get_user_data(username):
             'Board': config['credentials']['usernames'][username].get('Board', None),
             'State_Board': config['credentials']['usernames'][username].get('State_Board', None),
             'Class': config['credentials']['usernames'][username].get('Class', None),
+            'Stream': config['credentials']['usernames'][username].get('Stream', None),
             'College_Name': config['credentials']['usernames'][username].get('College_Name', None),
-            'Stream_Name': config['credentials']['usernames'][username].get('Stream_Name', None),
+            'Course_Name': config['credentials']['usernames'][username].get('Course_Name', None),
             'Subject': config['credentials']['usernames'][username].get('Subject', None)
         }
         return data
@@ -94,14 +95,21 @@ with register_tab:
                                     'class_10', 'class_11', 'class_12'
                                     ]
                     selected_class = st.selectbox('Select Class', class_options)
+                    if selected_class == 'class_11' or selected_class == 'class_12':
+                        stream_type = ['Commerce', 'Science', 'Arts', 'Medical']
+                        selected_stream = st.selectbox('Select Stream Type', stream_type)
+                    else:
+                        selected_stream = None
                     selected_college_name_type = None
-                    selected_stream_type = None
+                    selected_course_type = None
                     selected_subject_type = None
                 elif selected_s_c_ce_type == "college":
                     college_name_type = ['Govt Holkar Science College', 'DAVV', 'RGPV']
                     selected_college_name_type = st.selectbox('Select College/University Name', college_name_type)
-                    stream_type = ['B.Sc', 'M.Sc', 'B.E']
-                    selected_stream_type = st.selectbox('Select Stream', stream_type)
+                    stream_type = ['Commerce', 'Science', 'Arts', 'Medical']
+                    selected_stream = st.selectbox('Select Stream Type', stream_type)
+                    course_type = ['B.Sc', 'M.Sc', 'B.E']
+                    selected_course_type = st.selectbox('Select Course', course_type)
                     subject_type = ['Computer Science', 'Mathematics', 'Statistics']
                     selected_subject_type = st.selectbox('Select Subject', subject_type)
                     selected_board_type = None
@@ -114,7 +122,8 @@ with register_tab:
                 selected_board_type = None
                 selected_state_board = None
                 selected_class = None
-                selected_college_name_type = None
+                selected_stream = None
+                selected_course_name_type = None
                 selected_stream_type = None
                 selected_subject_type = None
 
@@ -131,8 +140,12 @@ with register_tab:
                     else:
                         config['credentials']['usernames'][username_of_registered_user]['State_Board'] = None
                     config['credentials']['usernames'][username_of_registered_user]['Class'] = selected_class
+                    if selected_class == 'class_11' or selected_class == 'class_12':
+                        config['credentials']['usernames'][username_of_registered_user]['Stream'] = selected_stream
+                    else:
+                        config['credentials']['usernames'][username_of_registered_user]['Stream'] = None
                     config['credentials']['usernames'][username_of_registered_user]['College_Name'] = selected_college_name_type
-                    config['credentials']['usernames'][username_of_registered_user]['Stream_Name'] = selected_stream_type
+                    config['credentials']['usernames'][username_of_registered_user]['Course_Name'] = selected_course_type
                     config['credentials']['usernames'][username_of_registered_user]['Subject'] = selected_subject_type
 
                 elif selected_s_c_ce_type == 'college':
@@ -140,15 +153,17 @@ with register_tab:
                     config['credentials']['usernames'][username_of_registered_user]['State_Board'] = selected_state_board
                     config['credentials']['usernames'][username_of_registered_user]['Class'] = selected_class
                     config['credentials']['usernames'][username_of_registered_user]['College_Name'] = selected_college_name_type
-                    config['credentials']['usernames'][username_of_registered_user]['Stream_Name'] = selected_stream_type
+                    config['credentials']['usernames'][username_of_registered_user]['Stream'] = selected_stream
+                    config['credentials']['usernames'][username_of_registered_user]['Course_Name'] = selected_course_type
                     config['credentials']['usernames'][username_of_registered_user]['Subject'] = selected_subject_type
 
                 else:
                     config['credentials']['usernames'][username_of_registered_user]['Board'] = selected_board_type
                     config['credentials']['usernames'][username_of_registered_user]['State_Board'] = selected_state_board
                     config['credentials']['usernames'][username_of_registered_user]['Class'] = selected_class
+                    config['credentials']['usernames'][username_of_registered_user]['Stream'] = selected_stream
                     config['credentials']['usernames'][username_of_registered_user]['College_Name'] = selected_college_name_type
-                    config['credentials']['usernames'][username_of_registered_user]['Stream_Name'] = selected_stream_type
+                    config['credentials']['usernames'][username_of_registered_user]['Course_Name'] = selected_course_type
                     config['credentials']['usernames'][username_of_registered_user]['Subject'] = selected_subject_type
 
                 st.success('User registered successfully')

@@ -16,10 +16,12 @@ if 'state_board' in ss:
     data['state_board'] = ss.state_board
 if 'class_name' in ss:
     data['class_name'] = ss.class_name
+if 'stream' in ss:
+    data['stream'] = ss.stream
 if 'college_name' in ss:
     data['college_name'] = ss.college_name
-if 'stream_name' in ss:
-    data['stream_name'] = ss.stream_name
+if 'course_name' in ss:
+    data['stream_name'] = ss.course_name
 if 'subject' in ss:
     data['subject'] = ss.subject
 
