@@ -46,10 +46,12 @@ class PDFDataDatabase:
             CREATE TABLE IF NOT EXISTS pdf_data (
                 pdf_id UUID NOT NULL PRIMARY KEY,
                 upload_by INTEGER NOT NULL,
+                last_modified_by INTEGER NOT NULL,
                 pdf_file_name TEXT NOT NULL UNIQUE,
                 pdf_path TEXT NOT NULL,
-                upload_date_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                class TEXT
+                class TEXT,
+                upload_date_time TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+                last_modified_data_time TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
             );
         '''
 
@@ -71,9 +73,9 @@ class PDFDataDatabase:
                 CREATE TABLE IF NOT EXISTS pdf_data_selection_type (
                     pdf_id UUID NOT NULL PRIMARY KEY,
                     upload_by INTEGER NOT NULL,
+                    last_modified_by INTEGER NOT NULL,
                     pdf_file_name TEXT NOT NULL UNIQUE,
                     pdf_path TEXT NOT NULL,
-                    upload_date_time TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
                     school_college_ce TEXT NOT NULL,
                     board_type TEXT,
                     state_board TEXT,
@@ -81,7 +83,9 @@ class PDFDataDatabase:
                     college_name TEXT,
                     stream_name TEXT,
                     subject_name TEXT,
-                    competitve_exam_name TEXT
+                    competitve_exam_name TEXT,
+                    upload_date_time TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata'),
+                    last_modified_data_time TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Kolkata')
                 );
         '''
 
@@ -94,28 +98,32 @@ class PDFDataDatabase:
             print(f"Error creating table: {e}")
             self.connection.rollback()
 
-    def insert_or_update_data_selection(self, data, upload_date_time=None):
+    def insert_or_update_data_selection(self, data, upload_date_time=None, last_modified_by=None, last_modified_data_time=None):
         if self.connection is None:
             print("No database connection. Call connect() first.")
             return
 
-        if upload_date_time is None:
+        last_modified_by = upload_by
+
+        if upload_date_time is None and last_modified_data_time is None:
             upload_date_time = datetime.now()
+            last_modified_data_time = datetime.now()
 
         # Convert upload_date_time to IST
         ist_timezone = pytz.timezone('Asia/Kolkata')
         upload_date_time = upload_date_time.astimezone(ist_timezone)
+        last_modified_data_time = last_modified_data_time.astimezone(ist_timezone)
 
         upsert_query = '''
             INSERT INTO pdf_data_selection_type (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, school_college_ce, board_type,
-                                                state_board, class_name, college_name, stream_name, subject_name, competitve_exam_name)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                                state_board, class_name, college_name, stream_name, subject_name, competitve_exam_name, last_modified_data_time, last_modified_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (pdf_file_name)
             DO UPDATE SET
                 pdf_id = EXCLUDED.pdf_id,
-                upload_by = EXCLUDED.upload_by,
+                last_modified_by = EXCLUDED.last_modified_by,
                 pdf_path = EXCLUDED.pdf_path,
-                upload_date_time = EXCLUDED.upload_date_time,
+                last_modified_data_time = EXCLUDED.last_modified_data_time,
                 school_college_ce = EXCLUDED.school_college_ce,
                 board_type = EXCLUDED.board_type,
                 state_board = EXCLUDED.state_board,
@@ -129,9 +137,10 @@ class PDFDataDatabase:
         try:
             with self.connection.cursor() as cursor:
                 cursor.execute(upsert_query, (
-                    data['pdf_id'], data['upload_by'], data['pdf_file_name'], data['pdf_path'], upload_date_time,
+                    data['pdf_id'], data['upload_by'], data['pdf_file_name'], data['pdf_path'], str(upload_date_time),
                     data['school_college_ce'], data['board_type'], data['state_board'], data['class_name'],
-                    data['college_name'], data['stream_name'], data['subject_name'], data['competitve_exam_name']
+                    data['college_name'], data['stream_name'], data['subject_name'], data['competitve_exam_name'], str(last_modified_data_time),
+                    last_modified_by
                 ))
                 self.connection.commit()
                 print("Data inserted or updated successfully.")
@@ -139,29 +148,39 @@ class PDFDataDatabase:
             print(f"Error inserting or updating data: {e}")
             self.connection.rollback()
 
-    def insert_or_update_data_class(self, pdf_id, upload_by, pdf_file_name, pdf_path, class_name=None, upload_date_time=None):
+    def insert_or_update_data_class(self, pdf_id, upload_by, pdf_file_name, pdf_path, class_name=None, upload_date_time=None, last_modified_data_time=None):
         if self.connection is None:
             print("No database connection. Call connect() first.")
             return
 
-        if upload_date_time is None:
+        last_modified_by = upload_by
+
+        if upload_date_time is None and last_modified_data_time is None:
             upload_date_time = datetime.now()
+            last_modified_data_time = datetime.now()
+
+        # Convert upload_date_time to IST
+        ist_timezone = pytz.timezone('Asia/Kolkata')
+        upload_date_time = upload_date_time.astimezone(ist_timezone)
+        last_modified_data_time = last_modified_data_time.astimezone(ist_timezone)
 
         upsert_query = '''
-            INSERT INTO pdf_data (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, class)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO pdf_data (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, class, last_modified_data_time, last_modified_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (pdf_file_name)
             DO UPDATE SET
                 pdf_id = EXCLUDED.pdf_id,
-                upload_by = EXCLUDED.upload_by,
+                last_modified_by = EXCLUDED.last_modified_by,
                 pdf_path = EXCLUDED.pdf_path,
-                upload_date_time = EXCLUDED.upload_date_time,
+                last_modified_data_time = EXCLUDED.last_modified_data_time,
                 class = EXCLUDED.class;
         '''
 
         try:
             with self.connection.cursor() as cursor:
-                cursor.execute(upsert_query, (pdf_id, upload_by, pdf_file_name, pdf_path, upload_date_time, class_name))
+                cursor.execute(upsert_query, (pdf_id, upload_by, pdf_file_name, pdf_path, str(upload_date_time), class_name,
+                                str(last_modified_data_time), last_modified_by)
+                                )
                 self.connection.commit()
                 print("Data inserted or updated successfully.")
         except Exception as e:
@@ -303,11 +322,30 @@ class PDFDataDatabase:
         try:
             with psycopg2.connect(host=constants.DBHOST, database=constants.DBNAME, user=constants.DBUSER, password=constants.DBPW) as db:
                 cursor = db.cursor()
-                cursor.execute("DELETE FROM pdf_data")
-                cursor.execute("DELETE FROM langchain_pg_collection")
-                is_rec_exist = False
-        except Exception:
-            pass
+
+                # Check if 'pdf_data' table has any records
+                cursor.execute("SELECT EXISTS(SELECT 1 FROM pdf_data)")
+                pdf_data_exists = cursor.fetchone()[0]
+
+                # Check if 'langchain_pg_collection' table has any records
+                cursor.execute("SELECT EXISTS(SELECT 1 FROM langchain_pg_collection)")
+                langchain_pg_collection_exists = cursor.fetchone()[0]
+
+                # If records exist in 'pdf_data', delete them
+                if pdf_data_exists:
+                    cursor.execute("DELETE FROM pdf_data")
+                
+                # If records exist in 'langchain_pg_collection', delete them
+                if langchain_pg_collection_exists:
+                    cursor.execute("DELETE FROM langchain_pg_collection")
+
+                # Set the flag to False if both tables were empty
+                if not pdf_data_exists and not langchain_pg_collection_exists:
+                    is_rec_exist = False
+
+        except Exception as e:
+            print(f"An error occurred: {e}")
+
         return {'is_rec_exist': is_rec_exist}
 
     def close_connection(self):

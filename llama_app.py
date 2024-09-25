@@ -328,7 +328,7 @@ def update_changes():
     db.delete_all()
     for file, value in file_dict.items():
         if file.endswith(".pdf"):
-            pdf_details = rag_function._pdf_file_process(file, value["file_path"], teacher_id)
+            pdf_details = rag_function._pdf_file_process(file, value["file_path"], value["collection_name"], teacher_id)
             message = rag_function._create_embedding_all(pdf_details['pdf_id'], pdf_details['pdf_path'], value["collection_name"])
 
     return jsonify(message)

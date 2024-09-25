@@ -4,11 +4,13 @@ import fitz
 import boto3
 import tempfile
 import constants
+import easyocr
 import pytesseract
 from io import BytesIO
 from pprint import pprint
 from pdf2image import convert_from_path
-from typing import Dict, TypedDict, Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, TypedDict, Any, List
 from langgraph.graph import END, StateGraph
 from langchain.docstore.document import Document
 from langchain_core.prompts import PromptTemplate
@@ -19,6 +21,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
 from database import PDFDataDatabase, VectorStorePostgresVector
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
+import numpy as np
 
 set_debug(True)
 set_verbose(True)
@@ -41,7 +44,7 @@ class GraphState(TypedDict):
 
 
 class llama_model:
-    def __init__(self) -> None:
+    def __init__(self, chunk_size=2000, chunk_overlap=290, max_workers=4, dpi=150, use_gpu=True) -> None:
         self.local_llm = constants.LOCAL_LLM
         self.pdf_directory_class = constants.PDF_DIRECTORY_CLASS
         self.pdf_directory_all = constants.PDF_DIRECTORY_ALL
@@ -57,6 +60,11 @@ class llama_model:
                             aws_access_key_id=constants.ACCESS_KEY,
                             aws_secret_access_key=constants.SECRET_KEY
                         )
+        self.text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        self.max_workers = max_workers  # Maximum number of parallel threads
+        self.dpi = dpi  # Set DPI for image extraction
+        self.reader = easyocr.Reader(["hi","mr","ne","en"], gpu=use_gpu)  # Initialize EasyOCR reader with desired languages
+
 
     def _delete_s3_file(self, s3_file_key):
         # Delete the file from the S3 bucket
@@ -67,67 +75,87 @@ class llama_model:
         except Exception:
             return False
 
-    # Function to perform OCR on images
-    def _extract_text_from_images(self, pdf_path):  # Add more as needed
-        images = convert_from_path(pdf_path)
-        text_content = []
+    def extract_text_from_images(self, images) -> List[str]:
+        """
+        Perform OCR on a batch of images using EasyOCR. Converts PIL images to numpy arrays first.
+        """
+        ocr_results = []
         for image in images:
-            # Perform OCR with specified languages
-            text = pytesseract.image_to_string(image, lang=self.languages)
-            text_content.append(text)
-        return text_content
+            # Convert PIL image to numpy array
+            np_image = np.array(image)
+            result = self.reader.readtext(np_image, detail=0)  # Using EasyOCR to extract text
+            ocr_text = ' '.join(result)  # Joining the extracted text fragments
+            ocr_results.append(ocr_text)
+        return ocr_results
 
-    def _get_docs_split(self, pdf_files) -> Any:
+    def _process_page(self, page, images_for_page) -> List[Document]:
+        """
+        Process both text and images on the page and return extracted text in document objects.
+        """
         docs_list = []
-        with tempfile.NamedTemporaryFile(delete=True) as temp_file:
-            temp_file.write(pdf_files.getvalue())
-            temp_file_path = temp_file.name
-            # Open the PDF document directly with PyMuPDF (fitz)
-            doc = fitz.open(temp_file_path)
+        page_number = page.number
+        metadata = {
+            'source': 'PDF',
+            'page': page_number,
+            'total_pages': page.parent.page_count,
+            'format': page.parent.metadata.get('format', 'PDF'),
+            'title': page.parent.metadata.get('title', ''),
+            'author': page.parent.metadata.get('author', ''),
+            'creationDate': page.parent.metadata.get('creationDate', ''),
+            'modDate': page.parent.metadata.get('modDate', '')
+        }
 
-            # Loop through the pages of the PDF
-            for page_number in range(doc.page_count):
-                page = doc.load_page(page_number)
-                images = page.get_images(full=True)  # Detect if the page contains images
+        # Extract text directly from the page
+        page_text = page.get_text("text")
+        if page_text.strip():  # If there's any direct text, add it to the document
+            doc_object = Document(
+                page_content=page_text,
+                metadata=metadata
+            )
+            docs_list.append(doc_object)
 
-                # Extract metadata for each page
-                metadata = {
-                    'source': temp_file_path,
-                    'file_path': temp_file_path,
-                    'page': page_number,
-                    'total_pages': doc.page_count,
-                    'format': doc.metadata.get('format', 'PDF'),
-                    'title': doc.metadata.get('title', ''),
-                    'author': doc.metadata.get('author', ''),
-                    'creationDate': doc.metadata.get('creationDate', ''),
-                    'modDate': doc.metadata.get('modDate', '')
-                }
-
-                # Check for images and perform OCR
-                if images:
-                    # If there are images, perform OCR to extract text
-                    ocr_text = self._extract_text_from_images(temp_file_path)
-                    for text in ocr_text:
-                        # Create a Document object for each extracted OCR text
-                        doc_object = Document(
-                            page_content=text,
-                            metadata=metadata
-                        )
-                        docs_list.append(doc_object)
-                else:
-                    # If no images, extract text from the page
-                    page_text = page.get_text("text")
-                    # Create a Document object for the extracted text
+        # Process OCR for images on this page if images are present
+        if images_for_page:
+            ocr_results = self.extract_text_from_images(images_for_page)
+            for ocr_text in ocr_results:
+                if ocr_text.strip():  # Only add non-empty OCR text
                     doc_object = Document(
-                        page_content=page_text,
+                        page_content=ocr_text,
                         metadata=metadata
                     )
                     docs_list.append(doc_object)
 
-            # Split the documents into smaller chunks using the text splitter
-            text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=2000, chunk_overlap=290)
-            doc_split = text_splitter.split_documents(docs_list)
+        return docs_list
 
+    def _get_docs_split(self, pdf_files, languages="eng+hin+deu+spa+fra") -> Any:
+        """
+        Process the PDF document, extract text from both pages and images, and return text chunks.
+        """
+        import pdb;pdb.set_trace()
+        docs_list = []
+        with tempfile.NamedTemporaryFile(delete=True) as temp_file:
+            temp_file.write(pdf_files.getvalue())
+            temp_file_path = temp_file.name
+            # Open the PDF document with PyMuPDF (fitz)
+            doc = fitz.open(temp_file_path)
+
+            # Extract all images from the PDF at once to avoid reloading
+            pdf_images = convert_from_path(temp_file_path, dpi=self.dpi)
+
+            # Process each page in parallel
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = []
+                for i in range(doc.page_count):
+                    page = doc.load_page(i)
+                    # Map page number to corresponding image batch from `pdf_images`
+                    images_for_page = [img for idx, img in enumerate(pdf_images) if idx == i]
+                    futures.append(executor.submit(self._process_page, page, images_for_page))
+
+                for future in futures:
+                    docs_list.extend(future.result())
+
+            # Split the documents into smaller chunks using the text splitter
+            doc_split = self.text_splitter.split_documents(docs_list)
             return doc_split
 
     def _pdf_file_save(self, teacher_id, pdf_file) -> Dict:
@@ -152,7 +180,7 @@ class llama_model:
         db.close_connection()
         return {'pdf_id': pdf_uuid, "pdf_path": pdf_file_path}
 
-    def _pdf_file_process(self, file_name, pdf_file_path, teacher_id=None) -> Dict:
+    def _pdf_file_process(self, file_name, pdf_file_path, class_name=None, teacher_id=None) -> Dict:
         """Saves the PDF file in S3 Bucket if it does not already exist."""
         pdf_uuid = uuid.uuid4()
 
@@ -162,6 +190,7 @@ class llama_model:
             upload_by=teacher_id,  # Example teacher ID
             pdf_file_name=file_name,
             pdf_path=pdf_file_path,
+            class_name=class_name
         )
         db.close_connection()
         return {'pdf_id': pdf_uuid, "pdf_path": pdf_file_path}
@@ -423,6 +452,7 @@ class llama_model:
                 prompt = PromptTemplate(
                         template="""You are an assistant for question-answering tasks. \n
                         Treat as a Question , regardless of punctuation. \n
+                        Keep the Question in the as it is language, don't change the language. \n
                         Use the following pieces of retrieved context to answer the question. \n
                         If the Question does not belongs to the Context, just say "FALLBACK",
                         don't give information based on your own Knowledge base,
@@ -435,6 +465,7 @@ class llama_model:
                         """,
                         input_variables=["question", "document"],
                     )
+
 
                 # Post-processing
                 def format_docs(docs):
@@ -509,41 +540,6 @@ class llama_model:
                     }
                 }
 
-            def transform_query(state):
-                """
-                Transform the query to produce a better question.
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    state (dict): Updates question key with a re-phrased question
-                """
-
-                print("---TRANSFORM QUERY---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                # documents = state_dict["documents"]
-
-                # Create a prompt template with format instructions and the query
-                prompt = PromptTemplate(
-                    template="""Treat as a Question , regardless of punctuation. \n
-                    Here is the initial question:
-                    \n ------- \n
-                    {question}
-                    \n ------- \n
-                    Provide an improved question without any premable, only respond with the
-                    updated question: """,
-                    input_variables=["question"],
-                )
-                # Prompt
-                chain = prompt | llm_without_format | StrOutputParser()
-
-                better_question = chain.invoke({"question": question})
-
-                return {
-                    "keys": {"question": better_question}
-                }
 
             def decide_to_generate(state):
                 """
@@ -627,10 +623,8 @@ class llama_model:
             workflow.add_node("retrieve", retrieve)  # retrieve
             workflow.add_node("grade_documents", grade_documents)  # grade documents
             workflow.add_node("generate", generate)  # generatae
-            workflow.add_node("transform_query", transform_query)  # transform_query
 
-            workflow.set_entry_point("transform_query")
-            workflow.add_edge("transform_query", "retrieve")
+            workflow.set_entry_point("retrieve")
             workflow.add_edge("retrieve", "grade_documents")
             workflow.add_conditional_edges(
                 "grade_documents",
@@ -714,6 +708,7 @@ class llama_model:
                 prompt = PromptTemplate(
                         template="""You are an assistant for question-answering tasks. \n
                         Treat as a Question , regardless of punctuation. \n
+                        Keep the Question in the as it is language, don't change the language. \n
                         Use the following pieces of retrieved context to answer the question. \n
                         If the Question does not belongs to the Context, just say "FALLBACK",
                         don't give information based on your own Knowledge base,
@@ -800,42 +795,6 @@ class llama_model:
                     }
                 }
 
-            def transform_query(state):
-                """
-                Transform the query to produce a better question.
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    state (dict): Updates question key with a re-phrased question
-                """
-
-                print("---TRANSFORM QUERY---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                # documents = state_dict["documents"]
-
-                # Create a prompt template with format instructions and the query
-                prompt = PromptTemplate(
-                    template="""Treat as a Question , regardless of punctuation. \n
-                    Here is the initial question:
-                    \n ------- \n
-                    {question}
-                    \n ------- \n
-                    Provide an improved question without any premable, only respond with the
-                    updated question: """,
-                    input_variables=["question"],
-                )
-                # Prompt
-                chain = prompt | llm_without_format | StrOutputParser()
-
-                better_question = chain.invoke({"question": question})
-
-                return {
-                    "keys": {"question": better_question}
-                }
-
             def decide_to_generate(state):
                 """
                 Determines whether to generate an answer or re-generate a question for web search.
@@ -918,10 +877,8 @@ class llama_model:
             workflow.add_node("retrieve", retrieve)  # retrieve
             workflow.add_node("grade_documents", grade_documents)  # grade documents
             workflow.add_node("generate", generate)  # generatae
-            workflow.add_node("transform_query", transform_query)  # transform_query
 
-            workflow.set_entry_point("transform_query")
-            workflow.add_edge("transform_query", "retrieve")
+            workflow.set_entry_point("retrieve")
             workflow.add_edge("retrieve", "grade_documents")
             workflow.add_conditional_edges(
                 "grade_documents",
