@@ -21,7 +21,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
 from database import PDFDataDatabase, VectorStorePostgresVector
 from langchain_huggingface.embeddings import HuggingFaceEmbeddings
-import numpy as np
+from langchain_community.document_loaders import PyMuPDFLoader
 
 set_debug(True)
 set_verbose(True)
@@ -75,88 +75,26 @@ class llama_model:
         except Exception:
             return False
 
-    def extract_text_from_images(self, images) -> List[str]:
-        """
-        Perform OCR on a batch of images using EasyOCR. Converts PIL images to numpy arrays first.
-        """
-        ocr_results = []
-        for image in images:
-            # Convert PIL image to numpy array
-            np_image = np.array(image)
-            result = self.reader.readtext(np_image, detail=0)  # Using EasyOCR to extract text
-            ocr_text = ' '.join(result)  # Joining the extracted text fragments
-            ocr_results.append(ocr_text)
-        return ocr_results
-
-    def _process_page(self, page, images_for_page) -> List[Document]:
-        """
-        Process both text and images on the page and return extracted text in document objects.
-        """
+    def _get_docs_split(self, pdf_files) -> Any:
         docs_list = []
-        page_number = page.number
-        metadata = {
-            'source': 'PDF',
-            'page': page_number,
-            'total_pages': page.parent.page_count,
-            'format': page.parent.metadata.get('format', 'PDF'),
-            'title': page.parent.metadata.get('title', ''),
-            'author': page.parent.metadata.get('author', ''),
-            'creationDate': page.parent.metadata.get('creationDate', ''),
-            'modDate': page.parent.metadata.get('modDate', '')
-        }
-
-        # Extract text directly from the page
-        page_text = page.get_text("text")
-        if page_text.strip():  # If there's any direct text, add it to the document
-            doc_object = Document(
-                page_content=page_text,
-                metadata=metadata
-            )
-            docs_list.append(doc_object)
-
-        # Process OCR for images on this page if images are present
-        if images_for_page:
-            ocr_results = self.extract_text_from_images(images_for_page)
-            for ocr_text in ocr_results:
-                if ocr_text.strip():  # Only add non-empty OCR text
-                    doc_object = Document(
-                        page_content=ocr_text,
-                        metadata=metadata
-                    )
-                    docs_list.append(doc_object)
-
-        return docs_list
-
-    def _get_docs_split(self, pdf_files, languages="eng+hin+deu+spa+fra") -> Any:
-        """
-        Process the PDF document, extract text from both pages and images, and return text chunks.
-        """
-        import pdb;pdb.set_trace()
-        docs_list = []
+        # for file in pdf_files:
         with tempfile.NamedTemporaryFile(delete=True) as temp_file:
             temp_file.write(pdf_files.getvalue())
             temp_file_path = temp_file.name
-            # Open the PDF document with PyMuPDF (fitz)
-            doc = fitz.open(temp_file_path)
+            loaded_docs = PyMuPDFLoader(temp_file_path).load()
 
-            # Extract all images from the PDF at once to avoid reloading
-            pdf_images = convert_from_path(temp_file_path, dpi=self.dpi)
-
-            # Process each page in parallel
-            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-                futures = []
-                for i in range(doc.page_count):
-                    page = doc.load_page(i)
-                    # Map page number to corresponding image batch from `pdf_images`
-                    images_for_page = [img for idx, img in enumerate(pdf_images) if idx == i]
-                    futures.append(executor.submit(self._process_page, page, images_for_page))
-
-                for future in futures:
-                    docs_list.extend(future.result())
-
-            # Split the documents into smaller chunks using the text splitter
-            doc_split = self.text_splitter.split_documents(docs_list)
-            return doc_split
+        # Ensure that loaded_docs is processed correctly
+        for doc in loaded_docs:
+            if isinstance(doc, tuple):
+                # Assuming the tuple structure is like (page_number, page_content)
+                page_number, page_content = doc
+                docs_list.append({'page_content': page_content})
+            else:
+                # If it's already in the desired format, just add it
+                docs_list.append(doc)
+        text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=2000, chunk_overlap=290)
+        doc_split = text_splitter.split_documents(docs_list)
+        return doc_split
 
     def _pdf_file_save(self, teacher_id, pdf_file) -> Dict:
         """Saves the PDF file in S3 Bucket if it does not already exist."""
@@ -589,6 +527,7 @@ class llama_model:
 
                 hallucination_grader = prompt_hallucination | llm_format | JsonOutputParser()
                 score = hallucination_grader.invoke({"documents": documents, "generation": generation})
+        
 
                 # Check hallucination
                 try:
@@ -609,9 +548,13 @@ class llama_model:
 
                         answer_grader = prompt_resolve | llm_format | JsonOutputParser()
                         score = answer_grader.invoke({"question": question, "generation": generation})
+                
                         grade = score['score']
+                
                         if grade == "yes":
                             return "useful"
+                        else:
+                            return "not supported"
                     else:
                         return "not supported"
                 except Exception:
@@ -843,10 +786,12 @@ class llama_model:
 
                 hallucination_grader = prompt_hallucination | llm_format | JsonOutputParser()
                 score = hallucination_grader.invoke({"documents": documents, "generation": generation})
+        
 
                 # Check hallucination
                 try:
                     grade = score['score']
+            
                     if grade == "yes":
                         prompt_resolve = PromptTemplate(
                             template="""You are a grader assessing whether an answer is useful to resolve a question.
@@ -864,8 +809,11 @@ class llama_model:
                         answer_grader = prompt_resolve | llm_format | JsonOutputParser()
                         score = answer_grader.invoke({"question": question, "generation": generation})
                         grade = score['score']
+                
                         if grade == "yes":
                             return "useful"
+                        else:
+                            return "not supported"
                     else:
                         return "not supported"
                 except Exception:
@@ -972,3 +920,4 @@ class llama_model:
                     return {'status': 401}
             else:
                 return {'status': 401}
+9
