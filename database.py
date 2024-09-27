@@ -103,7 +103,7 @@ class PDFDataDatabase:
             print("No database connection. Call connect() first.")
             return
 
-        last_modified_by = upload_by
+        last_modified_by = data['upload_by']
 
         if upload_date_time is None and last_modified_data_time is None:
             upload_date_time = datetime.now()
