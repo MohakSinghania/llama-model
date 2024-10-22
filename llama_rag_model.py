@@ -397,13 +397,15 @@ class llama_model:
                 prompt = PromptTemplate(
                             template="""
                             You are an assistant for answering questions. 
-                            Keep the language same as the question for example if the language of the question is in english then give answer in english , do no change the language.\n
+                            Keep the answer strictly in the same language as the question. For example if the question is in english then give answer in english only, do not change the language.\n
                             The question can be in any language, keep the question in the same language without translation.\n
                             Use the provided context to answer the question directly and concisely.\n
-                            Provide the Answer in Detailed Way.\n
+                            Always provide a detailed answer with the capability for the user to understand the provided answer accurately.\n
+                            Provide a flow diagram or an image which might or might not be present in the document for visual understanding of the answer if possible.
                             Only provide the answer to the question. Avoid restating the question or providing extra information.
                             If the context is irrelevant or empty, respond with "FALLBACK".\n
-                            Do not provide any information based on your own knowledge.
+                            Do not provide any information based on your own knowledge. \n
+                            The question asked might be based on a very minute information from the document. Try to fetch as much info as possible for the question.
 
                             Question: {question}
                             Context: {context}
@@ -446,7 +448,7 @@ class llama_model:
                     Here is the user question: {question} \n
                     If the document contains keywords related to the user question,
                     grade it as relevant. \n
-                    If the document does not contain Maximum keywords or is a empty list,
+                    If the document does not contain Maximum keywords or is an empty list,
                     grade it as irrelevant. \n
                     It does not need to be a stringent test. The goal is to filter out
                     erroneous retrievals. \n
