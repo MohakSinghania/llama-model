@@ -401,8 +401,9 @@ class llama_model:
                             The question can be in any language, keep the question in the same language without translation.\n
                             Use the provided context to answer the question directly and concisely.\n
                             Always provide a detailed answer with the capability for the user to understand the provided answer accurately.\n
-                            Provide a flow diagram or an image which might or might not be present in the document for visual understanding of the answer if possible.
-                            Only provide the answer to the question. Avoid restating the question or providing extra information.
+                            Provide a flow diagram or an image which might or might not be present in the document for visual understanding of the answer if possible.\n
+                            Provide a flow diagram even if the question asks for a diagram or not. If the question asked can be explained better with a flow chart or a diagram, provide the same.\n
+                            Only provide the answer to the question. Avoid restating the question or providing extra information.\n
                             If the context is irrelevant or empty, respond with "FALLBACK".\n
                             Do not provide any information based on your own knowledge. \n
                             The question asked might be based on a very minute information from the document. Try to fetch as much info as possible for the question.
