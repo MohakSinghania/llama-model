@@ -86,7 +86,14 @@ def rag_model_class():
         data = session[student_id]
         class_name = data["class_name"]
     try:
+        # import pdb;pdb.set_trace
         answer = rag_function._get_answer_to_query(user_query, class_name)
+        # Extract and print the 'Answer'
+        if 'answer' in answer and answer['answer']:
+            # Find the 'Answer' part within the answer string
+            answer_str = answer['answer']
+            answer_key = answer_str.split('Answer: ')[1] if 'Answer: ' in answer_str else answer_str
+            answer['answer'] = answer_key
         return jsonify(answer)
 
     except Exception as e:

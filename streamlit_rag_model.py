@@ -11,7 +11,7 @@ from langchain_core.prompts import PromptTemplate
 from langchain.globals import set_verbose, set_debug
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import StrOutputParser
-from langchain_text_splitters import CharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_community.document_loaders import PyMuPDFLoader
 from database import PDFDataDatabase, VectorStorePostgresVector
@@ -38,18 +38,23 @@ class GraphState(TypedDict):
 
 
 class llama_model:
-    def __init__(self) -> None:
+    def __init__(self, chunk_size=2000, chunk_overlap=290, max_workers=4, dpi=150, use_gpu=True) -> None:
         self.local_llm = constants.LOCAL_LLM
         self.pdf_directory_class = constants.PDF_DIRECTORY_CLASS
         self.pdf_directory_all = constants.PDF_DIRECTORY_ALL
         self.pdf_directory_school = constants.PDF_DIRECTORY_SCHOOL
         self.pdf_directory_college = constants.PDF_DIRECTORY_COLLEGE
-        self.embedding = HuggingFaceEmbeddings(model_name=constants.HUGGINGFACE_MODEL)
+        self.languages = constants.LANGUAGES
+        self.embedding = HuggingFaceEmbeddings(
+                            model_name=constants.HUGGINGFACE_MODEL,
+                            model_kwargs={'trust_remote_code': True, 'truncate_dim': constants.DIMENSION}
+                        )
         self.s3_client = boto3.client(
                             's3',
                             aws_access_key_id=constants.ACCESS_KEY,
                             aws_secret_access_key=constants.SECRET_KEY
                         )
+        self.text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
     def _get_docs_split(self, pdf_files) -> Any:
         docs_list = []

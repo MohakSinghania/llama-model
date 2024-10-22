@@ -6,11 +6,12 @@ import tempfile
 import constants
 import easyocr
 import pytesseract
+from datetime import datetime
 from io import BytesIO
 from pprint import pprint
 from pdf2image import convert_from_path
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, TypedDict, Any, List
+from typing import Dict, TypedDict, Any, List, Union
 from langgraph.graph import END, StateGraph
 from langchain.docstore.document import Document
 from langchain_core.prompts import PromptTemplate
@@ -61,19 +62,6 @@ class llama_model:
                             aws_secret_access_key=constants.SECRET_KEY
                         )
         self.text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        self.max_workers = max_workers  # Maximum number of parallel threads
-        self.dpi = dpi  # Set DPI for image extraction
-        self.reader = easyocr.Reader(["hi","mr","ne","en"], gpu=use_gpu)  # Initialize EasyOCR reader with desired languages
-
-
-    def _delete_s3_file(self, s3_file_key):
-        # Delete the file from the S3 bucket
-        try:
-            bucket_name = constants.BUCKETNAME
-            self.s3_client.delete_object(Bucket=bucket_name, Key=s3_file_key)
-            return True
-        except Exception:
-            return False
 
     def _get_docs_split(self, pdf_files) -> Any:
         docs_list = []
@@ -387,24 +375,41 @@ class llama_model:
                 documents = state_dict["documents"]
 
                 # Prompt
+                # prompt = PromptTemplate(
+                #         template="""You are an assistant for question-answering tasks. \n
+                #         Treat as a Question , regardless of punctuation. \n
+                #         Keep the Question in the as it is language, don't change the language. \n
+                #         Provide the answer related to Question only.\n
+                #         Use the following pieces of retrieved context to answer the question. \n
+                #         I need the answer only not the metadata around that answer so that user can see only the answe of the question asked.\n
+                #         If the Question does not belongs to the Context, just say "FALLBACK",
+                #         don't give information based on your own Knowledge base,
+                #         just say or provide answer as "FALLBACK". \n
+                #         if the Context is a empty list then also say or provide answer as "FALLBACK". \n
+
+                #         Question: {question}
+                #         Context: {context}
+                #         Answer:
+                #         """,
+                #         input_variables=["question", "document"],
+                #     )
+
                 prompt = PromptTemplate(
-                        template="""You are an assistant for question-answering tasks. \n
-                        Treat as a Question , regardless of punctuation. \n
-                        Keep the Question in the as it is language, don't change the language. \n
-                        Use the following pieces of retrieved context to answer the question. \n
-                        If the Question does not belongs to the Context, just say "FALLBACK",
-                        don't give information based on your own Knowledge base,
-                        just say or provide answer as "FALLBACK". \n
-                        if the Context is a empty list then also say or provide answer as "FALLBACK". \n
+                            template="""
+                            You are an assistant for answering questions. 
+                            Keep the language same as the question for example if the language of the question is in english then give answer in english , do no change the language.\n
+                            The question can be in any language, keep the question in the same language without translation.\n
+                            Use the provided context to answer the question directly and concisely.\n
+                            Provide the Answer in Detailed Way.\n
+                            Only provide the answer to the question. Avoid restating the question or providing extra information.
+                            If the context is irrelevant or empty, respond with "FALLBACK".\n
+                            Do not provide any information based on your own knowledge.
 
-                        Question: {question}
-                        Context: {context}
-                        Answer:
-                        """,
-                        input_variables=["question", "document"],
-                    )
-
-
+                            Question: {question}
+                            Context: {context}
+                            Answer (without additional information):
+                            """,
+                            input_variables=["question", "context"])
                 # Post-processing
                 def format_docs(docs):
                     return "\n\n".join(doc.page_content for doc in docs)
@@ -478,7 +483,6 @@ class llama_model:
                     }
                 }
 
-
             def decide_to_generate(state):
                 """
                 Determines whether to generate an answer or re-generate a question for web search.
@@ -548,9 +552,9 @@ class llama_model:
 
                         answer_grader = prompt_resolve | llm_format | JsonOutputParser()
                         score = answer_grader.invoke({"question": question, "generation": generation})
-                
+
                         grade = score['score']
-                
+
                         if grade == "yes":
                             return "useful"
                         else:
@@ -602,322 +606,61 @@ class llama_model:
             answer = value["keys"]["generation"]
             fallback_status = bool(re.search(r"FALLBACK", answer, re.I))
             if fallback_status:
-                return {'message': 'Query processed successfully', 'status': 404, 'question': query,
+                return {'message': 'Query processed successfully', 'status': 402, 'question': query,
                         'answer': "Sorry the provided query does not belong to context"}
             else:
                 return {'message': 'Query processed successfully', 'status': 200, 'question': query, 'answer': answer}
         except Exception:
-            return {'message': 'Answer is not available in the PDF', 'status': 404, 'question': query, 'answer': answer}
+            return {'message': 'Answer is not available in the PDF', 'status': 402, 'question': query, 'answer': answer}
 
-    def _get_answer_to_query_selection(self, query, data):
+    def _delete_s3_file(self, s3_file_key: str) -> bool:
         try:
-            llm_format = ChatOllama(model=local_llm, format="json", temperature=0)
-            llm_without_format = ChatOllama(model=local_llm, temperature=0)
-            retriever = self._vectorstore_retriever_selection(data)
-
-            # Nodes
-            def retrieve(state):
-                """
-                Retrieve documents
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    state (dict): New key added to state, documents, that contains retrieved documents
-                """
-                print("---RETRIEVE---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                documents = retriever.get_relevant_documents(question)
-                return {"keys": {"documents": documents, "question": question}}
-
-            def generate(state):
-                """
-                Generate answer
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    state (dict): New key added to state, generation, that contains generation
-                """
-                print("---GENERATE---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                documents = state_dict["documents"]
-
-                # Prompt
-                prompt = PromptTemplate(
-                        template="""You are an assistant for question-answering tasks. \n
-                        Treat as a Question , regardless of punctuation. \n
-                        Keep the Question in the as it is language, don't change the language. \n
-                        Use the following pieces of retrieved context to answer the question. \n
-                        If the Question does not belongs to the Context, just say "FALLBACK",
-                        don't give information based on your own Knowledge base,
-                        just say or provide answer as "FALLBACK". \n
-                        if the Context is a empty list then also say or provide answer as "FALLBACK". \n
-
-                        Question: {question}
-                        Context: {context}
-                        Answer:
-                        """,
-                        input_variables=["question", "document"],
-                    )
-
-                # Post-processing
-                def format_docs(docs):
-                    return "\n\n".join(doc.page_content for doc in docs)
-
-                # Chain
-                rag_chain = prompt | llm_without_format | StrOutputParser()
-
-                # Run
-                generation = rag_chain.invoke({"context": documents, "question": question})
-                return {
-                    "keys": {"documents": documents, "question": question, "generation": generation}
-                }
-
-            def grade_documents(state):
-                """
-                Determines whether the retrieved documents are relevant to the question.
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    state (dict): Updates documents key with relevant documents
-                """
-
-                print("---CHECK RELEVANCE---")
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                documents = state_dict["documents"]
-
-                prompt = PromptTemplate(
-                    template="""You are a grader assessing the relevance of a retrieved
-                    document to a user question. \n
-                    Here is the retrieved document: \n\n {context} \n\n
-                    Here is the user question: {question} \n
-                    If the document contains keywords related to the user question,
-                    grade it as relevant. \n
-                    If the document does not contain Maximum keywords or is a empty list,
-                    grade it as irrelevant. \n
-                    It does not need to be a stringent test. The goal is to filter out
-                    erroneous retrievals. \n
-                    Give a binary score of 'yes' or 'no' score to indicate whether the document
-                    is relevant to the question. \n
-                    Provide the binary score as a JSON with a single key 'score' and no preamble
-                    or explanation.
-                    """,
-                    input_variables=["question", "context"],
-                )
-
-                chain = prompt | llm_format | JsonOutputParser()
-
-                # Score
-                filtered_docs = []
-                for d in documents:
-                    score = chain.invoke(
-                        {
-                            "question": question,
-                            "context": d.page_content,
-                        }
-                    )
-                    grade = score["score"]
-                    if grade == "yes":
-                        print("---GRADE: DOCUMENT RELEVANT---")
-                        filtered_docs.append(d)
-                    else:
-                        continue
-
-                return {
-                    "keys": {
-                        "documents": filtered_docs,
-                        "question": question,
-                    }
-                }
-
-            def decide_to_generate(state):
-                """
-                Determines whether to generate an answer or re-generate a question for web search.
-
-                Args:
-                    state (dict): The current state of the agent, including all keys.
-
-                Returns:
-                    str: Next node to call
-                """
-
-                print("---DECIDE TO GENERATE---")
-                return "generate"
-
-            # Conditional edge
-
-            def grade_generation_v_documents_and_question(state):
-                """
-                Determines whether the generation is grounded in the document and answers question.
-
-                Args:
-                    state (dict): The current graph state
-
-                Returns:
-                    str: Decision for next node to call
-                """
-                state_dict = state["keys"]
-                question = state_dict["question"]
-                documents = state_dict["documents"]
-                generation = state_dict["generation"]
-
-                prompt_hallucination = PromptTemplate(
-                    template="""You are a grader assessing whether
-                    an answer is grounded in / supported by a set of facts. Give a binary score 'yes' or 'no' score to indicate
-                    whether the answer is grounded in / supported by a set of facts. Provide the binary score as a JSON with a
-                    single key 'score' and no preamble or explanation.
-
-                    Here are the facts:
-                    {documents}
-
-                    Here is the answer:
-                    {generation}
-                    """,
-                    input_variables=["generation", "documents"],
-                    )
-
-                hallucination_grader = prompt_hallucination | llm_format | JsonOutputParser()
-                score = hallucination_grader.invoke({"documents": documents, "generation": generation})
-        
-
-                # Check hallucination
-                try:
-                    grade = score['score']
-            
-                    if grade == "yes":
-                        prompt_resolve = PromptTemplate(
-                            template="""You are a grader assessing whether an answer is useful to resolve a question.
-                            Give a binary score 'yes' or 'no' to indicate whether the answer is useful to resolve a question.
-                            Provide the binary score as a JSON with a single key 'score' and no preamble or explanation.
-
-                            Here is the answer:
-                            {generation}
-
-                            Here is the question: {question}
-                            """,
-                            input_variables=["generation", "question"],
-                            )
-
-                        answer_grader = prompt_resolve | llm_format | JsonOutputParser()
-                        score = answer_grader.invoke({"question": question, "generation": generation})
-                        grade = score['score']
-                
-                        if grade == "yes":
-                            return "useful"
-                        else:
-                            return "not supported"
-                    else:
-                        return "not supported"
-                except Exception:
-                    return "not supported"
-
-            workflow = StateGraph(GraphState)
-
-            # Define the nodes
-            workflow.add_node("retrieve", retrieve)  # retrieve
-            workflow.add_node("grade_documents", grade_documents)  # grade documents
-            workflow.add_node("generate", generate)  # generatae
-
-            workflow.set_entry_point("retrieve")
-            workflow.add_edge("retrieve", "grade_documents")
-            workflow.add_conditional_edges(
-                "grade_documents",
-                decide_to_generate,
-                {
-                    "generate": "generate",
-                },
-            )
-            workflow.add_conditional_edges(
-                "generate",
-                grade_generation_v_documents_and_question,
-                {
-                    "not supported": END,
-                    "useful": END,
-                },
-            )
-
-            # Compile
-            app = workflow.compile()
-            # Run
-            inputs = {
-                "keys": {
-                    "question": query,
-                }
-            }
-            for output in app.stream(inputs):
-                for key, value in output.items():
-                    # Node
-                    pprint(f"Node '{key}':")
-
-                pprint("\n---\n")
-            answer = value["keys"]["generation"]
-            fallback_status = bool(re.search(r"FALLBACK", answer, re.I))
-            if fallback_status:
-                return {'message': 'Query processed successfully', 'status': 404, 'question': query,
-                        'answer': "Sorry the provided query does not belong to context"}
-            else:
-                return {'message': 'Query processed successfully', 'status': 200, 'question': query, 'answer': answer}
+            self.s3_client.delete_object(Bucket=constants.BUCKETNAME, Key=s3_file_key)
+            return True
         except Exception:
-            return {'message': 'Answer is not available in the PDF', 'status': 404, 'question': query, 'answer': answer}
+            return False
 
-    def _display_files(self, admin_id, class_name):
-        if class_name != 'None':
-            db.connect()
-            filenames = db.get_files_by_class(class_name)
-            db.close_connection()
-            if filenames != []:
-                return {'message': f'The List of files for {class_name}', 'status': 200, 'filenames': filenames}
-            else:
-                return {'message': f'There is no files for {class_name}', 'status': 404, 'filenames': filenames}
+    def _display_files(self, admin_id: Union[str, int], class_name: str) -> Dict[str, Union[str, int, List[Dict[str, Any]]]]:
+        db.connect()
+        filenames = db.get_files_by_class(class_name if class_name != 'None' else None)
+        db.close_connection()
+
+        if filenames:
+            return {
+                'message': f'The List of files for {class_name}' if class_name != 'None' else 'The List of all files',
+                'status': 200,
+                'filenames': [
+                    {
+                        'pdf_id': file['pdf_id'],
+                        'pdf_file_name': file['pdf_file_name'],
+                        'pdf_path': file['pdf_path'],
+                        'upload_by': file['upload_by'],
+                        'upload_date_time': file['upload_date_time'].isoformat() if isinstance(file['upload_date_time'],
+                                                                                               datetime) else file['upload_date_time']
+                    } for file in filenames
+                ]
+            }
         else:
-            db.connect()
-            filenames = db.get_files_by_class()
-            db.close_connection()
-            if filenames != []:
-                return {'message': f'The List of files for {class_name}', 'status': 200, 'filenames': filenames}
-            else:
-                return {'message': f'There is no files for {class_name}', 'status': 404, 'filenames': filenames}
+            return {
+                'message': f'There are no files for {class_name}' if class_name != 'None' else 'There are no files available',
+                'status': 404,
+                'filenames': []
+            }
 
-    def _delete_files(self, file_id, file_name, class_name):
-        if class_name != 'None':
-            vector_store = VectorStorePostgresVector(class_name, self.embedding)
-            embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
-            if not embeddings_status['is_rec_exist']:
-                db.connect()
-                file_status = db.delete_record(file_id, file_name, class_name)
-                db.close_connection()
-                status = False
-                if file_status['pdf_path'] is not None:
-                    status = self._delete_s3_file(file_status['pdf_path'])
-                if status:
-                    return {'status': 200}
-                else:
-                    return {'status': 401}
-            else:
-                return {'status': 401}
+    def _delete_files(self, file_id: Union[str, int], file_name: str, class_name: str) -> Dict[str, int]:
+        vector_store_name = class_name if class_name != 'None' else "all_pdf_files"
+        vector_store = VectorStorePostgresVector(vector_store_name, self.embedding)
+        embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
 
-        else:
-            vector_store = VectorStorePostgresVector("all_pdf_files", self.embedding)
-            embeddings_status = vector_store.delete_file_embeddings_from_collection(file_id)
-            if not embeddings_status['is_rec_exist']:
-                db.connect()
-                file_status = db.delete_record(file_id, file_name)
-                db.close_connection()
-                status = False
-                if file_status['pdf_path'] is not None:
-                    status = self._delete_s3_file(file_status['pdf_path'])
-                if status:
-                    return {'status': 200}
-                else:
-                    return {'status': 401}
-            else:
-                return {'status': 401}
-9
+        if embeddings_status['is_rec_exist']:
+            return {'status': 401}
+
+        db.connect()
+        file_status = db.delete_record(file_id, file_name, class_name if class_name != 'None' else None)
+        db.close_connection()
+
+        if file_status['pdf_path'] is not None:
+            if self._delete_s3_file(file_status['pdf_path']):
+                return {'status': 200}
+
+        return {'status': 401}
